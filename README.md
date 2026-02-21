@@ -1,66 +1,65 @@
-## Jazz Guitar Solo Generator（個人練習用MVP）
+## Jazz Guitar Solo Generator (MVP)
 
-Autumn Leaves（キーGm想定）冒頭8小節ループのコード進行を見ながら、**TABのソロ例を無限生成して覚える**ためのミニアプリです。
+A personal mini app for practicing over **Autumn Leaves** (assumed key center: **G minor**) by:
 
-- **生成の方針**: 単なるランダムではなく、  
-  **制約（ルール）＋候補生成＋スコアリング（採点）＋多様性フィルタ**で「音楽的に良い」上位のみを表示します。
-- **音出し**: Tone.jsでコードを8小節ループ再生（BPM可変 / Start・Stop / ストラム＋軽いリバーブ）
+- Showing the chord progression (8-bar loop)
+- Generating ranked guitar TAB ideas you can memorize and play along with
+- Providing a short explanation of note choices
+- Playing the chord progression via Tone.js (BPM, swing, comping grid)
 
-注意: 著作権のある既存メロディや既存録音のフレーズのコピーは行いません（練習用のオリジナル生成のみ）。
+The generator is **not** pure random. Internally it uses:
+**constraints (rules) → candidate generation → scoring → diversity filtering**.
 
 ## Getting Started
 
-### セットアップ
+### Setup
 
 ```bash
 npm i
 npm run dev
 ```
 
-ブラウザで `http://localhost:3000` を開きます。
+Open `http://localhost:3000`.
 
-## 使い方
+## How to use
 
-- **Generate**: pool（内部候補K）から上位Nを選んでTABを表示します
-- **seed**: 同じseedなら同じ候補群を再現できます
-- **style / level / sliders**: 密度・クロマチック率・和音ヒット・モチーフ反復・運指レンジなどを調整します
-- **Start/Stop + BPM**: 8小節ループのコードを再生します
+- **Style / Level**: Select a style profile and difficulty level.
+- **Seed**:
+  - **Locked**: same seed → same results (reproducible)
+  - **Random**: changes the seed every time you click Generate
+- **Generate**: Generates a pool of candidates internally and shows the top ranked picks.
+- **Chord playback** (sticky footer): Start/Stop, BPM, Swing (triplet feel), Comping grid (8th/quarter).
 
-## 生成ロジック（概要）
+## Generator architecture (high level)
 
-実装は `lib/` 配下に分離しています。
+Core logic is under `lib/`.
 
-- **曲データ**: `lib/songs/autumnLeavesGm.ts`
-- **音楽モデル**: `lib/music/*`（コード解析、コードトーン/ガイドトーン、進行上のコード参照など）
-- **候補生成**: `lib/generator.ts`
-  - 強拍（1拍目/3拍目）は chord tones を優先
-  - 特に 3rd / 7th を優先（ガイドトーン）
-  - D7ではF#（3rd）を一定確率で含め、Gmへの解決を促進
-  - style/level/パラメータで motif / chord hit / クロマチック装飾の出やすさを調整
-- **採点**: `lib/scoring.ts`
-  - strong beat のコードトーン/ガイドトーン
-  - voice leading（次コードへの近さ）
-  - tension→解決
-  - 運指/レンジ/跳躍/リズム単調さ など
-- **多様性フィルタ**: `lib/diversity.ts`
-  - リズムパターンと音高n-gramの類似度で「良いけど同じ」を弾きます
-- **TAB化（運指）**: `lib/tab.ts`
-  - 各音（/和音）の弦・フレット候補を列挙
-  - 移動コスト最小になるようDPで経路選択
-  - 6弦TAB（等幅・コピーしやすい）へレンダリング
+- **Song/progression data**: `lib/songs/autumnLeavesGm.ts`
+- **Music model**: `lib/music/*` (chords, chord tones / guide tones, progression lookup)
+- **Idiom “forms” dictionary**: `lib/forms.ts` (2-beat patterns with space/rests)
+- **Candidate generation**: `lib/generator.ts`
+  - Strong beats prefer chord tones, especially **3rd/7th (guide tones)**
+  - D7 includes **F# (3rd)** frequently to strengthen resolution to Gm
+  - Uses idiom forms + additional recipes (approach/enclosure/motif/chord hits)
+- **Scoring**: `lib/scoring.ts` (strong-beat targets, voice-leading, resolution, range/leap, rhythm variety, etc.)
+- **Diversity filter**: `lib/diversity.ts` (rhythm bits + pitch-class n-grams)
+- **TAB + fingering**: `lib/tab.ts`
+  - Enumerates playable string/fret options
+  - Picks a low-cost path via DP (reduces string hopping, avoids unplayable chord spans)
+  - Renders 6-string TAB with chord names aligned to the 8th-note grid
 
-## “ギターっぽい音” と “ストラム感” の調整ポイント
+## Sound / strum tuning
 
-`lib/audio.ts` の以下を調整すると変化が分かりやすいです。
+Adjust `lib/audio.ts` `DEFAULT_GUITAR_LIKE_SETTINGS`:
 
-- **ストラム感**: `DEFAULT_GUITAR_LIKE_SETTINGS.strumMinMs / strumMaxMs`
-- **残響**: `DEFAULT_GUITAR_LIKE_SETTINGS.reverbWet / reverbDecay`
-- **アタック/減衰**: `DEFAULT_GUITAR_LIKE_SETTINGS.attack / decay / sustain / release`
+- **Strum feel**: `strumMinMs` / `strumMaxMs`
+- **Reverb**: `reverbWet` / `reverbDecay`
+- **Envelope**: `attack` / `decay` / `sustain` / `release`
+- **Swing**: `swingAmount`
+- **Comping grid**: `compSubdivision` ("eighth" / "quarter")
 
-（UIはMVPのためBPMとStart/Stopのみ露出。音色パラメータはコード側で調整します。）
+## Key files
 
-## 主要ファイル
-
-- `app/page.tsx`: 1ページUI（進行表示 / TAB候補リスト / 解説 / 再生）
-- `components/*`: UI部品（Controls, ChordChart, GeneratedList, Explanation, AudioControls）
-- `lib/*`: 生成ロジックと再生ロジック
+- `app/page.tsx`: Single-page UI
+- `components/*`: UI components
+- `lib/*`: Generator + audio + music logic

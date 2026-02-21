@@ -114,7 +114,7 @@ export default function Home() {
     <div className="min-h-screen bg-zinc-50 px-4 py-8 pb-44 text-zinc-900 dark:bg-black dark:text-zinc-100">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6">
         <header className="grid gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Jazz Practice Mini App (MVP)</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Jazz Guitar Solo Generator</h1>
           <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-400">
             Generate ranked guitar TAB ideas over the 8-bar loop of “Autumn Leaves” (Gm).
           </p>

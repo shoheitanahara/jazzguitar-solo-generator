@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Jazz Practice Mini App",
+  title: "Jazz Guitar Solo Generator",
   description: "Generate ranked guitar TAB ideas over Autumn Leaves (8-bar loop).",
 };
 
