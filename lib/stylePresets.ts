@@ -74,7 +74,8 @@ export function paramsForStyle(style: Style, level: Level): GeneratorParams {
 
   const byStyle: Partial<Record<Style, Partial<GeneratorParams>>> = {
     JoePassType: {
-      density: 0.36 + 0.16 * lf,
+      // 8分を減らして「歌う」感じに寄せる
+      density: 0.22 + 0.14 * lf,
       chromaticRate: 0.18 + 0.22 * lf,
       chordHitRate: 0.22 + 0.28 * lf,
       motifRate: 0.18 + 0.10 * lf,
@@ -82,9 +83,9 @@ export function paramsForStyle(style: Style, level: Level): GeneratorParams {
       positionPreference: 7,
     },
     PatMartinoType: {
-      density: 0.55 + 0.28 * lf,
+      density: 0.42 + 0.28 * lf,
       chromaticRate: 0.26 + 0.36 * lf,
-      chordHitRate: 0.02 + 0.03 * lf,
+      chordHitRate: 0.08 + 0.04 * lf, // thin chord hits even in single-note types
       motifRate: 0.55 + 0.35 * lf,
       maxFret: 12 + 3 * lf,
       positionPreference: 8,
@@ -98,17 +99,17 @@ export function paramsForStyle(style: Style, level: Level): GeneratorParams {
       positionPreference: 7,
     },
     GrantGreenType: {
-      density: 0.30 + 0.22 * lf,
+      density: 0.24 + 0.20 * lf,
       chromaticRate: 0.10 + 0.16 * lf,
-      chordHitRate: 0.02 + 0.03 * lf,
+      chordHitRate: 0.06 + 0.04 * lf,
       motifRate: 0.28 + 0.22 * lf,
       maxFret: 10 + 3 * lf,
       positionPreference: 7,
     },
     ModernBebopType: {
-      density: 0.62 + 0.25 * lf,
+      density: 0.50 + 0.28 * lf,
       chromaticRate: 0.35 + 0.40 * lf,
-      chordHitRate: 0.01 + 0.03 * lf,
+      chordHitRate: 0.05 + 0.05 * lf,
       motifRate: 0.22 + 0.18 * lf,
       maxFret: 12 + 3 * lf,
       positionPreference: 9,
@@ -116,7 +117,7 @@ export function paramsForStyle(style: Style, level: Level): GeneratorParams {
     BasicGuideTone: {
       density: 0.22 + 0.16 * lf,
       chromaticRate: 0.05 + 0.10 * lf,
-      chordHitRate: 0,
+      chordHitRate: 0.06 + 0.02 * lf,
       motifRate: 0,
       maxFret: 9 + 1 * lf,
       positionPreference: 7,

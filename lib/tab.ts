@@ -152,7 +152,7 @@ function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number)
   // 高音弦↔低音弦の“行き来”を抑える（音色が急に変わってジャズギターらしさが落ちる）
   const regionA = a.avgString <= 2 ? "low" : a.avgString >= 4 ? "high" : "mid";
   const regionB = b.avgString <= 2 ? "low" : b.avgString >= 4 ? "high" : "mid";
-  const regionSwitchPenalty = regionA !== regionB ? 0.9 : 0;
+  const regionSwitchPenalty = regionA !== regionB ? 1.8 : 0;
 
   // 単音ラインでの極端弦を軽く避ける（和音は除外しない）
   const extremeStringPenalty =
@@ -160,7 +160,7 @@ function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number)
 
   return (
     moveFret * 1.0 +
-    moveString * 1.25 +
+    moveString * 2.0 +
     spanPenalty +
     stringSpanPenalty +
     posPenalty +

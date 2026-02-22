@@ -46,3 +46,50 @@ export function formatChordChartBars(bars: readonly Bar[]): string[] {
   return lines;
 }
 
+type Section = {
+  label: string;
+  startBarIndex: number; // 0-based
+  endBarIndexExclusive: number; // 0-based
+};
+
+export function formatChordChartWithSections(args: {
+  bars: readonly Bar[];
+  sections: readonly Section[];
+  barsPerLine?: number;
+  barCellWidth?: number;
+}): string[] {
+  const { bars, sections, barsPerLine = 4, barCellWidth = 16 } = args;
+  const lines: string[] = [];
+
+  const barText = (bar: Bar) => bar.segments.map((s) => s.chord.text).join(" ");
+  const padCell = (s: string) => s.padEnd(barCellWidth, " ");
+
+  for (const sec of sections) {
+    const startBarNo = sec.startBarIndex + 1;
+    const endBarNo = sec.endBarIndexExclusive;
+    lines.push(`${sec.label} (bars ${startBarNo}–${endBarNo})`);
+
+    for (let i = sec.startBarIndex; i < sec.endBarIndexExclusive; i += barsPerLine) {
+      const slice = bars.slice(i, Math.min(i + barsPerLine, sec.endBarIndexExclusive));
+
+      const nums = slice
+        .map((_, idx) => String(i + idx + 1))
+        .map((n) => padCell(n))
+        .join("| ");
+      const chords = slice
+        .map((b) => barText(b))
+        .map((s) => padCell(s))
+        .join("| ");
+
+      lines.push(`| ${nums}|`);
+      lines.push(`| ${chords}|`);
+    }
+
+    lines.push(""); // blank line between sections
+  }
+
+  // trim trailing blank lines
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+

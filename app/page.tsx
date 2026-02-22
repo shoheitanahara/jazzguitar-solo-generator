@@ -1,15 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { AUTUMN_LEAVES_GM_8BARS } from "@/lib/songs/autumnLeavesGm";
-import { formatChordChartBars } from "@/lib/music/progression";
+import { AUTUMN_LEAVES_GM_32BARS } from "@/lib/songs/autumnLeavesGm";
+import { formatChordChartWithSections } from "@/lib/music/progression";
 import type { Level, Style } from "@/lib/generator";
 import { generateRankedTabs } from "@/lib/engine";
 import { getChordLooper, type ChordLooper } from "@/lib/audio";
 import { Controls } from "@/components/Controls";
 import { ChordChart } from "@/components/ChordChart";
 import { GeneratedList } from "@/components/GeneratedList";
-import { Explanation } from "@/components/Explanation";
 import { AudioControls } from "@/components/AudioControls";
 import { paramsForStyle } from "@/lib/stylePresets";
 
@@ -17,8 +16,20 @@ const OUTPUT_SIZE = 5;
 const POOL_SIZE = 160;
 
 export default function Home() {
-  const song = AUTUMN_LEAVES_GM_8BARS;
-  const chordLines = React.useMemo(() => formatChordChartBars(song.progression.bars), [song]);
+  const song = AUTUMN_LEAVES_GM_32BARS;
+  const chordLines = React.useMemo(() => {
+    const bars = song.progression.bars;
+    // Lead-sheet variant in this project: A(8)x2 + B(16)
+    const sections =
+      bars.length === 32
+        ? [
+            { label: "A (repeat)", startBarIndex: 0, endBarIndexExclusive: 16 },
+            { label: "B", startBarIndex: 16, endBarIndexExclusive: 32 },
+          ]
+        : [{ label: "Form", startBarIndex: 0, endBarIndexExclusive: bars.length }];
+
+    return formatChordChartWithSections({ bars, sections, barsPerLine: 4, barCellWidth: 18 });
+  }, [song]);
 
   const [style, setStyle] = React.useState<Style>("JoePassType");
   const [level, setLevel] = React.useState<Level>(3);
@@ -28,7 +39,6 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = React.useState(false);
 
   const [items, setItems] = React.useState<ReturnType<typeof generateRankedTabs>["items"]>([]);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const [bpm, setBpm] = React.useState<number>(120);
   const [isPlaying, setIsPlaying] = React.useState<boolean>(false);
@@ -45,8 +55,6 @@ export default function Home() {
       }
     };
   }, []);
-
-  const selected = React.useMemo(() => items.find((x) => x.id === selectedId) ?? null, [items, selectedId]);
 
   const makeRandomSeedText = React.useCallback(() => {
     const rand =
@@ -73,7 +81,6 @@ export default function Home() {
         outputSize: OUTPUT_SIZE,
       });
       setItems(res.items);
-      setSelectedId(res.items[0]?.id ?? null);
       if (!isSeedLocked) setSeedText(seedTextUsed);
     } finally {
       setIsGenerating(false);
@@ -116,12 +123,12 @@ export default function Home() {
         <header className="grid gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Jazz Guitar Solo Generator</h1>
           <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-            Generate ranked guitar TAB ideas over the 8-bar loop of “Autumn Leaves” (Gm).
+            Generate ranked guitar TAB ideas over the full form of “Autumn Leaves” (Gm).
           </p>
         </header>
 
         <ChordChart
-          title="Chord Progression (8-bar loop)"
+          title="Chord Progression (32-bar form · A×2 + B)"
           subtitle={`Autumn Leaves · Key: ${song.keyCenter}`}
           lines={chordLines}
         />
@@ -146,11 +153,10 @@ export default function Home() {
           />
         </section>
 
-        <GeneratedList items={items} selectedId={selectedId} onSelect={setSelectedId} />
-        <Explanation selected={selected} />
+        <GeneratedList items={items} />
 
         <footer className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-          TAB uses an 8th-note grid and wraps every 4 bars.
+          TAB uses an 8th-note grid and wraps every 4 bars. (Full 32-bar form)
         </footer>
       </main>
 

@@ -25,22 +25,35 @@ const CHORD_SPECS: Record<ChordQuality, ChordSpec> = {
  * - Am7b5/D7/Gm は Gマイナー解決を意識し D7にF# を含める
  */
 export function defaultScaleForChord(symbol: ChordSymbol): PitchClass[] {
-  // Bb major: Bb C D Eb F G A (PC: 10,0,2,3,5,7,9)
-  const bbMajor: PitchClass[] = [10, 0, 2, 3, 5, 7, 9];
+  // Practical defaults:
+  // - Keep a special case for D7 to include F# (harmonic minor color) for Gm resolution.
+  // - Otherwise choose a simple mode by chord quality (works across the full form).
+  //
+  // This is not a full theory engine; it provides a reasonable pitch-class pool for generator fragments.
 
   // G natural minor: G A Bb C D Eb F (PC: 7,9,10,0,2,3,5)
   const gNaturalMinor: PitchClass[] = [7, 9, 10, 0, 2, 3, 5];
-
   // G harmonic minor: G A Bb C D Eb F# (PC: 7,9,10,0,2,3,6)
   const gHarmonicMinor: PitchClass[] = [7, 9, 10, 0, 2, 3, 6];
 
-  // 記号ベースでざっくり分岐（拡張しやすいように別モジュール化しても良い）
-  if (symbol.text === "D7") return gHarmonicMinor; // F# を含めて Gmへ解決
-  if (symbol.text === "Gm") return gNaturalMinor;
+  if (symbol.text === "D7") return gHarmonicMinor;
+  if (symbol.text === "Gm" || symbol.text === "Gm7") return gNaturalMinor;
   if (symbol.text === "Am7b5") return gNaturalMinor;
 
-  // それ以外はBbメジャー寄り（Autumn Leaves 冒頭の8小節に必要な範囲）
-  return bbMajor.map((pc) => pc);
+  const rootPc = noteToPitchClass(symbol.root);
+  const modeIntervals: Record<ChordQuality, readonly number[]> = {
+    // Ionian
+    maj7: [0, 2, 4, 5, 7, 9, 11],
+    // Dorian
+    m7: [0, 2, 3, 5, 7, 9, 10],
+    // Mixolydian
+    "7": [0, 2, 4, 5, 7, 9, 10],
+    // Locrian
+    m7b5: [0, 1, 3, 5, 6, 8, 10],
+  };
+
+  const ints = modeIntervals[symbol.quality];
+  return ints.map((i) => mod12(rootPc + i));
 }
 
 export function parseChordSymbol(text: string): ChordSymbol {

@@ -38,6 +38,12 @@ function eventPrimaryMidi(event: PhraseEvent): number {
   return Math.max(...event.midis);
 }
 
+function eventAnchorMidi(event: PhraseEvent): number {
+  if (event.kind === "note") return event.midi;
+  // chordHitは左手の“基準”として最低音（bass）を代表にする
+  return Math.min(...event.midis);
+}
+
 function collectStepMap(events: readonly PhraseEvent[]): Map<number, PhraseEvent> {
   const map = new Map<number, PhraseEvent>();
   for (const e of events) map.set(e.stepEighth, e);
@@ -188,16 +194,53 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
     guitarIdiomaticScore += clamp(0, 1.2 - best * 0.25, 1.2);
   }
 
+  // guitar idiomatic guardrail: 連続イベント間の“最小移動”が大きいほど減点（弦飛び越え/ポジション移動）
+  const ordered = candidate.events.slice().sort((a, b) => a.stepEighth - b.stepEighth);
+  for (let i = 1; i < ordered.length; i += 1) {
+    const a = eventAnchorMidi(ordered[i - 1]!);
+    const b = eventAnchorMidi(ordered[i]!);
+    const pa = positionsForMidi(a, candidate.params.maxFret);
+    const pb = positionsForMidi(b, candidate.params.maxFret);
+    if (pa.length === 0 || pb.length === 0) continue;
+
+    let bestMove = Number.POSITIVE_INFINITY;
+    let bestStringDelta = 0;
+    for (const x of pa) {
+      for (const y of pb) {
+        const sd = Math.abs(x.string - y.string);
+        const fd = Math.abs(x.fret - y.fret);
+        const move = sd * 2.2 + fd * 0.9;
+        if (move < bestMove) {
+          bestMove = move;
+          bestStringDelta = sd;
+        }
+      }
+    }
+
+    // “遠すぎる移動”をしっかり減点（生成側が抑える前提なので、ここは保険）
+    if (bestMove > 9) guitarIdiomaticScore -= (bestMove - 9) * 0.18;
+    if (bestStringDelta >= 3) guitarIdiomaticScore -= 0.8;
+  }
+
   // rhythm variety: 空白間隔が単調すぎると減点
   const steps = candidate.events.map((e) => e.stepEighth).sort((a, b) => a - b);
   const gaps: number[] = [];
   for (let i = 1; i < steps.length; i += 1) gaps.push(steps[i]! - steps[i - 1]!);
   if (gaps.length >= 4) {
     const uniq = new Set(gaps);
-    if (uniq.size === 1) rhythmVarietyScore -= 2.0;
+    if (uniq.size === 1) {
+      // 8分連打（gap=1）の単調さは強く減点。
+      // 4分中心（gap=2）などの“学習向けのシンプルさ”は減点しすぎない。
+      const g = gaps[0]!;
+      rhythmVarietyScore += g === 1 ? -2.0 : -0.2;
+    }
     else if (uniq.size === 2) rhythmVarietyScore -= 0.6;
     else rhythmVarietyScore += 0.6;
   }
+
+  // 8分の多さ guardrail: duration=1 が多い候補は優先度を落とす
+  const eighthCount = candidate.events.filter((e) => e.kind === "note" && e.durationEighth === 1).length;
+  if (eighthCount >= 10) rhythmVarietyScore -= (eighthCount - 9) * 0.25;
 
   // D7 rule: F# を含める + 次のGmへ「それっぽく」解決
   const hasFSharpOnD7 = candidate.events.some((e) => {
@@ -213,7 +256,7 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
   // D7直後（Gm頭）に Gmのガイドトーン( Bb or F )が来ると加点
   for (let step = 0; step < totalSteps; step += 1) {
     const chord = chordAtStep(song.progression, step);
-    if (chord.text !== "Gm") continue;
+    if (chord.text !== "Gm" && chord.text !== "Gm7") continue;
     const e = nearestEventAtOrAfter(stepMap, step, Math.min(step + 2, totalSteps - 1));
     if (!e) continue;
     const pc = mod12(eventPrimaryMidi(e));

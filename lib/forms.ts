@@ -10,11 +10,17 @@ export type FormContext = {
   scalePcs: readonly PitchClass[];
   chromaticRate: number; // 0..1
   space: number; // 0..1 (higher -> more rests)
-  lastMidi: number | null;
+};
+
+export type FormEvent = {
+  /** 2 beats window: 0..3 (eighth-note offsets) */
+  offsetEighth: 0 | 1 | 2 | 3;
+  durationEighth: 1 | 2;
+  pc: PitchClass;
 };
 
 export type FormResult = {
-  pcs: Array<PitchClass | null>; // length=4 (2 beats = 4 eighth notes)
+  events: FormEvent[];
   name: string;
 };
 
@@ -43,12 +49,6 @@ function approachTo(target: PitchClass, rng: Rng): PitchClass {
   return mod12(target + (rng.bool(0.5) ? 1 : -1));
 }
 
-function enclosureTo(target: PitchClass, rng: Rng): [PitchClass, PitchClass] {
-  const up = mod12(target + (rng.bool(0.7) ? 1 : 2));
-  const down = mod12(target - (rng.bool(0.7) ? 1 : 2));
-  return [up, down];
-}
-
 function scaleNeighbor(scale: readonly PitchClass[], from: PitchClass, rng: Rng): PitchClass {
   // スケール内で近い音を選び、過度な跳躍を避ける
   const near = scale
@@ -69,50 +69,51 @@ export function generateTwoBeatForm(ctx: FormContext): FormResult {
   const space = clamp01(ctx.space);
   const useChrom = rng.bool(c);
 
-  const patterns: Array<() => FormResult> = [
-    // Guide → (scale neighbor) → approach → next guide
-    () => {
-      const n1 = scaleNeighbor(scalePcs, startGuidePc, rng);
-      const n2 = useChrom ? approachTo(nextGuidePc, rng) : pickNearPc(rng, scalePcs, nextGuidePc);
-      return { pcs: [startGuidePc, n1, n2, nextGuidePc], name: "guide-neighbor-approach-guide" };
-    },
+  // Quarter-note feel base:
+  // - Beat1 (offset0) and Beat2 (offset2) are the default anchors (duration=2).
+  // - Optionally add ONE eighth-note embellishment at offset1 or offset3.
+  // - More space -> more likely to omit Beat2.
 
-    // Guide → enclosure → next guide (with pickup)
-    () => {
-      const [up, down] = enclosureTo(nextGuidePc, rng);
-      return { pcs: [startGuidePc, up, down, nextGuidePc], name: "guide-enclosure-guide" };
-    },
+  const beat2Omit = rng.bool(space * 0.75);
 
-    // Chord tone arpeggio feel → approach → next guide
-    () => {
-      const ct1 = pickNearPc(rng, chordPcs, startGuidePc);
-      const ct2 = pickNearPc(rng, chordPcs, nextGuidePc);
-      const n2 = scaleNeighbor(scalePcs, ct1, rng);
-      const n3 = useChrom ? approachTo(nextGuidePc, rng) : ct2;
-      return { pcs: [ct1, n2, n3, nextGuidePc], name: "arp-ish-to-guide" };
-    },
+  const beat2Pc = beat2Omit
+    ? null
+    : (() => {
+        // choose a near chord/scale tone that leans toward the next guide
+        const pool = rng.bool(0.7) ? chordPcs : scalePcs;
+        return pickNearPc(rng, pool, nextGuidePc);
+      })();
 
-    // Diatonic run to next guide (less chromatic)
-    () => {
-      const n1 = scaleNeighbor(scalePcs, startGuidePc, rng);
-      const n2 = scaleNeighbor(scalePcs, n1, rng);
-      const n3 = pickNearPc(rng, scalePcs, nextGuidePc);
-      return { pcs: [startGuidePc, n1, n2, n3], name: "diatonic-run" };
-    },
-  ];
+  const events: FormEvent[] = [];
 
-  // Basic behavior: always end on the next guide for smoothness
-  const chosen = patterns[rng.int(0, patterns.length)]!();
-  chosen.pcs[3] = nextGuidePc;
+  // Beat 1 anchor
+  events.push({ offsetEighth: 0, durationEighth: 2, pc: startGuidePc });
 
-  // “休符（スペース）” を作る：中間の8分を抜く（着地点は残す）
-  // 休符が入ると、コードの上で“しゃべる”感じになりやすく、ジャズギターっぽさが増す。
-  if (rng.bool(space)) chosen.pcs[1] = null;
-  if (rng.bool(space * 0.7)) chosen.pcs[2] = null;
+  if (beat2Pc != null) {
+    // Beat 2 anchor (usually quarter)
+    events.push({ offsetEighth: 2, durationEighth: 2, pc: beat2Pc });
 
-  // 最低限、始点/終点は残す
-  chosen.pcs[0] = startGuidePc;
-  chosen.pcs[3] = nextGuidePc;
-  return chosen;
+    // Optional embellishment (rare): split beat2 into two eighths to approach next guide
+    const allowLateApproach = rng.bool(clamp01(c * 0.45)) && !rng.bool(space);
+    if (allowLateApproach) {
+      const approach = useChrom ? approachTo(nextGuidePc, rng) : pickNearPc(rng, scalePcs, nextGuidePc);
+      // replace beat2 quarter with two eighths
+      events.pop();
+      events.push({ offsetEighth: 2, durationEighth: 1, pc: beat2Pc });
+      events.push({ offsetEighth: 3, durationEighth: 1, pc: approach });
+      return { events, name: "quarter-base-late-approach" };
+    }
+  } else {
+    // If beat2 is a rest, optional early embellishment (still rare)
+    const allowEarly = rng.bool(clamp01(c * 0.35)) && rng.bool(0.5);
+    if (allowEarly) {
+      const n1 = useChrom ? approachTo(startGuidePc, rng) : scaleNeighbor(scalePcs, startGuidePc, rng);
+      events[0] = { offsetEighth: 0, durationEighth: 1, pc: startGuidePc };
+      events.push({ offsetEighth: 1, durationEighth: 1, pc: n1 });
+      return { events, name: "quarter-base-early-embellish" };
+    }
+  }
+
+  return { events, name: "quarter-base" };
 }
 

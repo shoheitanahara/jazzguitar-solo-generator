@@ -11,45 +11,57 @@ function barFromSymbols(symbols: readonly [string, number][]): Bar {
 }
 
 /**
- * Autumn Leaves（キーGm想定）冒頭8小節ループ（後で拡張できる設計）
+ * Autumn Leaves（G minor）- this project's lead-sheet variant:
+ * - A (8 bars) repeated (total 16)
+ * - B (16 bars)
+ * => total 32 bars
  *
- * | Cm7 F7 | Bbmaj7 Ebmaj7 |
- * | Am7b5 D7 | Gm % |
- * | Cm7 F7 | Bbmaj7 Ebmaj7 |
- * | Am7b5 D7 | Gm |
+ * Notes:
+ * - There are multiple “standard” variants across fake books/recordings.
+ * - This version matches the provided lead sheet (no melody included).
+ * - Time: 4/4.
  */
-export const AUTUMN_LEAVES_GM_8BARS: Song = {
-  id: "autumn-leaves-gm-8bars",
-  title: "Autumn Leaves (8-bar loop)",
+export const AUTUMN_LEAVES_GM_32BARS: Song = {
+  id: "autumn-leaves-gm-32bars",
+  title: "Autumn Leaves",
   keyCenter: "G minor",
   progression: {
     timeSignature: "4/4",
     bars: [
-      barFromSymbols([
-        ["Cm7", 2],
-        ["F7", 2],
+      // A (8) x 2
+      ...Array.from({ length: 2 }).flatMap(() => [
+        barFromSymbols([["Cm7", 4]]),
+        barFromSymbols([["F7", 4]]),
+        barFromSymbols([["Bbmaj7", 4]]),
+        barFromSymbols([["Ebmaj7", 4]]),
+        barFromSymbols([["Am7b5", 4]]),
+        barFromSymbols([["D7", 4]]),
+        barFromSymbols([["Gm", 4]]),
+        barFromSymbols([["Gm", 4]]),
       ]),
-      barFromSymbols([
-        ["Bbmaj7", 2],
-        ["Ebmaj7", 2],
-      ]),
-      barFromSymbols([
-        ["Am7b5", 2],
-        ["D7", 2],
-      ]),
+
+      // B (16)
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7", 4]]),
       barFromSymbols([["Gm", 4]]),
+      barFromSymbols([["Gm", 4]]),
+      barFromSymbols([["Cm7", 4]]),
+      barFromSymbols([["F7", 4]]),
+      barFromSymbols([["Bbmaj7", 4]]),
+      barFromSymbols([["Ebmaj7", 4]]),
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7", 4]]),
       barFromSymbols([
-        ["Cm7", 2],
-        ["F7", 2],
+        ["Gm7", 2],
+        ["Gb7", 2],
       ]),
       barFromSymbols([
-        ["Bbmaj7", 2],
-        ["Ebmaj7", 2],
+        ["Fm7", 2],
+        ["E7", 2],
       ]),
-      barFromSymbols([
-        ["Am7b5", 2],
-        ["D7", 2],
-      ]),
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7", 4]]),
+      barFromSymbols([["Gm", 4]]),
       barFromSymbols([["Gm", 4]]),
     ],
   },

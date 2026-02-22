@@ -93,65 +93,69 @@ function styleProfile(style: Style): StyleProfile {
   }
 }
 
-function rhythmicSlotsForBar(rng: Rng, density: number, level: Level): number[] {
-  // 8分単位（1小節=8）
-  const d = clamp01(density);
-  const lf = levelFactor(level);
-
-  // 低密度: 1拍目/3拍目中心
-  if (d < 0.25) return [0, 4];
-  // 中: 1拍目/2拍目&/3拍目/4拍目&（やや跳ね）
-  if (d < 0.55) return rng.bool(0.5) ? [0, 2, 4, 6] : [0, 3, 4, 7];
-  // 高: 8分連打寄り、ただし単調回避のため少し抜く
-  const base = [0, 1, 2, 3, 4, 5, 6, 7];
-  if (lf < 0.5) {
-    // 抜きは少なめ
-    base.splice(rng.int(1, 7), 1);
-  } else {
-    // 抜きを増やしてシンコペ気味
-    base.splice(rng.int(1, 7), 1);
-    base.splice(rng.int(1, 7), 1);
-  }
-  return base;
+function rhythmicSlotsForBar(): readonly number[] {
+  // “4つ打ち（4分中心）” を固定の骨格にする。
+  // 8分の装飾は forms 側が “最大1音” の範囲で生成する。
+  return [0, 2, 4, 6] as const;
 }
 
 // 強拍ルールは生成の内部ロジックに直接埋め込み、現段階では別データとして保持しない。
 
-function chooseMidiNearPosition(
-  rng: Rng,
-  pc: PitchClass,
-  maxFret: number,
-  positionPreference: number,
-  lastMidi: number | null,
-): number {
-  // まずは弾けるMIDI候補を列挙（E3..E5あたりが扱いやすい）
+type LastPosition = { string: number; fret: number };
+
+function chooseMidiNearLastPosition(args: {
+  rng: Rng;
+  pc: PitchClass;
+  maxFret: number;
+  positionPreference: number;
+  lastMidi: number | null;
+  lastPos: LastPosition | null;
+  // beat strength: true -> prefer stable position, fewer leaps
+  strong: boolean;
+}): { midi: number; pos: LastPosition | null } {
+  const { rng, pc, maxFret, positionPreference, lastMidi, lastPos, strong } = args;
+
+  // Playable MIDI candidates (keep range guitar-friendly)
   const minMidi = 52; // E3
   const maxMidi = 76; // E5
   const candidates = midiCandidatesForPitchClass(pc, minMidi, maxMidi).filter((m) =>
     isPlayableMidi(m, maxFret),
   );
-  if (candidates.length === 0) {
-    // フォールバック: 範囲を広げる
-    const wider = midiCandidatesForPitchClass(pc, 40, 88).filter((m) => isPlayableMidi(m, maxFret));
-    return wider.length ? wider[rng.int(0, wider.length)] : 64;
-  }
+  const pool =
+    candidates.length > 0
+      ? candidates
+      : midiCandidatesForPitchClass(pc, 40, 88).filter((m) => isPlayableMidi(m, maxFret));
+  if (pool.length === 0) return { midi: 64, pos: null };
 
-  // “弦上のフレット” が positionPreference に近いものを優先
-  const scored = candidates
+  const bestPosCost = (midi: number): { pos: LastPosition | null; cost: number } => {
+    const positions = positionsForMidi(midi, maxFret);
+    if (positions.length === 0) return { pos: null, cost: Number.POSITIVE_INFINITY };
+
+    const scored = positions.map((p) => {
+      const fretDist = Math.abs(p.fret - positionPreference);
+      const toLastFret = lastPos ? Math.abs(p.fret - lastPos.fret) : 0;
+      const toLastString = lastPos ? Math.abs(p.string - lastPos.string) : 0;
+      // Strong beats: especially avoid string jumps / big shifts.
+      const moveCost = strong ? toLastString * 2.6 + toLastFret * 1.1 : toLastString * 2.0 + toLastFret * 0.85;
+      const positionCost = fretDist * 0.7;
+      return { p, cost: moveCost + positionCost };
+    });
+    scored.sort((a, b) => a.cost - b.cost);
+    return { pos: scored[0]!.p, cost: scored[0]!.cost };
+  };
+
+  const scored = pool
     .map((m) => {
-      const pos = positionsForMidi(m, maxFret);
-      const bestFret = Math.min(...pos.map((p) => p.fret));
-      const fretDist = Math.abs(bestFret - positionPreference);
+      const { pos, cost: posCost } = bestPosCost(m);
       const leap = lastMidi == null ? 0 : Math.abs(m - lastMidi);
-      // 跳躍も多少抑制（生成段階の粗い制約）
-      const score = fretDist * 1.0 + leap * 0.35;
-      return { m, score };
+      const leapCost = (strong ? 0.55 : 0.35) * leap;
+      return { m, pos, score: posCost + leapCost };
     })
     .sort((a, b) => a.score - b.score);
 
-  // 上位からランダムに選び、硬直しすぎないようにする
-  const take = Math.min(6, scored.length);
-  return scored[rng.int(0, take)]!.m;
+  const take = Math.min(5, scored.length);
+  const chosen = scored[rng.int(0, take)]!;
+  return { midi: chosen.m, pos: chosen.pos };
 }
 
 function pcDistance(a: PitchClass, b: PitchClass): number {
@@ -217,28 +221,6 @@ function choosePcNearLast(args: {
   return bests[rng.int(0, bests.length)]!.pc;
 }
 
-function approachOrEnclosure(
-  rng: Rng,
-  targetPc: PitchClass,
-  chromaticRate: number,
-  useEnclosure: boolean,
-): PitchClass[] {
-  const c = clamp01(chromaticRate);
-  if (!rng.bool(c)) return [targetPc];
-
-  // approach: 半音上下
-  if (!useEnclosure || rng.bool(0.6)) {
-    const fromAbove = rng.bool(0.5);
-    const a = mod12(targetPc + (fromAbove ? 1 : -1));
-    return [a, targetPc];
-  }
-
-  // enclosure: 上→下→着地（±1中心、時々±2）
-  const up = mod12(targetPc + (rng.bool(0.7) ? 1 : 2));
-  const down = mod12(targetPc - (rng.bool(0.7) ? 1 : 2));
-  return [up, down, targetPc];
-}
-
 function buildMotif(rng: Rng, level: Level): Motif {
   const lf = levelFactor(level);
   const length = (rng.bool(0.5) ? 3 : 2) + (lf > 0.6 && rng.bool(0.4) ? 1 : 0);
@@ -264,49 +246,77 @@ function applyMotifFromStartPc(startPc: PitchClass, motif: Motif): PitchClass[] 
 
 function chordHitMidis(
   rng: Rng,
+  chord: { rootPc: PitchClass; scalePcs: readonly PitchClass[]; text: string },
   chordPcs: readonly PitchClass[],
   maxFret: number,
   positionPreference: number,
-): number[] | null {
+  lastPos: LastPosition | null,
+): { midis: number[]; anchorPos: LastPosition } | null {
   // 2〜4音。まずは triad + 7th を優先しつつ「押さえられる形」しか採用しない。
   const desiredCount = rng.pick([2, 3, 3, 4] as const);
   const pcsPool = [...chordPcs];
 
   const picked: PitchClass[] = [];
+  // 低音を含めるため、rootを優先的に入れる（ジャズギターのコンピング感）
+  const rootPc = chord.rootPc;
+  picked.push(rootPc);
+  const rootIdx = pcsPool.indexOf(rootPc);
+  if (rootIdx >= 0) pcsPool.splice(rootIdx, 1);
   while (picked.length < desiredCount && pcsPool.length) {
     picked.push(pcsPool.splice(rng.int(0, pcsPool.length), 1)[0]!);
   }
   if (picked.length < 2) return null;
 
   // 各PCのmidi候補（ポジション寄り）を少数列挙
-  const perPcMidi: number[][] = picked.map((pc) => {
-    const minMidi = 45; // A2
-    const maxMidi = 76; // E5
+  const perPcMidi: number[][] = picked.map((pc, idx) => {
+    // bass候補は低めに寄せ、上声は中域へ
+    const isBass = idx === 0;
+    const minMidi = isBass ? 38 : 52; // D2 / E3
+    const maxMidi = isBass ? 58 : 76; // Bb3 / E5
     const candidates = midiCandidatesForPitchClass(pc, minMidi, maxMidi)
       .filter((m) => isPlayableMidi(m, maxFret))
       .map((m) => {
         const pos = positionsForMidi(m, maxFret);
-        const bestFret = Math.min(...pos.map((p) => p.fret));
-        const fretDist = Math.abs(bestFret - positionPreference);
-        return { m, fretDist };
+        const best = pos
+          .map((p) => {
+            const fretDist = Math.abs(p.fret - positionPreference);
+            const toLastFret = lastPos ? Math.abs(p.fret - lastPos.fret) : 0;
+            const toLastString = lastPos ? Math.abs(p.string - lastPos.string) : 0;
+            const lowStringBias = isBass ? p.string * 0.9 : 0; // bassほど低弦を強く好む
+            const moveCost = toLastString * 2.2 + toLastFret * 0.9;
+            return { p, cost: fretDist * 0.55 + moveCost * 0.6 + lowStringBias };
+          })
+          .sort((a, b) => a.cost - b.cost)[0]!;
+        return { m, cost: best.cost + (isBass ? (m - 38) * 0.02 : 0) };
       })
-      .sort((a, b) => a.fretDist - b.fretDist)
+      .sort((a, b) => a.cost - b.cost)
       .slice(0, 4)
       .map((x) => x.m);
 
     // フォールバック
-    return candidates.length ? candidates : [chooseMidiNearPosition(rng, pc, maxFret, positionPreference, null)];
+    if (candidates.length) return candidates;
+    return [
+      chooseMidiNearLastPosition({
+        rng,
+        pc,
+        maxFret,
+        positionPreference,
+        lastMidi: null,
+        lastPos: null,
+        strong: false,
+      }).midi,
+    ];
   });
 
   // 「押さえられる」判定: 隣接弦・フレット幅小・弦幅小の組み合わせが存在するか
-  type Shape = { midis: number[]; cost: number };
+  type Shape = { midis: number[]; cost: number; anchorPos: LastPosition };
   const shapes: Shape[] = [];
 
   const dfs = (idx: number, acc: number[]) => {
     if (idx >= perPcMidi.length) {
       const uniq = new Set(acc);
       if (uniq.size !== acc.length) return;
-      const shape = bestPlayableChordShape(acc, maxFret, positionPreference);
+      const shape = bestPlayableChordShape(acc, maxFret, positionPreference, lastPos);
       if (shape) shapes.push(shape);
       return;
     }
@@ -317,14 +327,15 @@ function chordHitMidis(
   if (shapes.length === 0) return null;
   shapes.sort((a, b) => a.cost - b.cost);
   const best = shapes[Math.min(rng.int(0, Math.min(3, shapes.length)), shapes.length - 1)]!;
-  return best.midis.sort((a, b) => a - b);
+  return { midis: best.midis.sort((a, b) => a - b), anchorPos: best.anchorPos };
 }
 
 function bestPlayableChordShape(
   midis: readonly number[],
   maxFret: number,
   posPref: number,
-): { midis: number[]; cost: number } | null {
+  lastPos: LastPosition | null,
+): { midis: number[]; cost: number; anchorPos: LastPosition } | null {
   const perNote = midis.map((m) =>
     positionsForMidi(m, maxFret)
       .slice()
@@ -364,10 +375,27 @@ function bestPlayableChordShape(
       if (stringSpan > 3) return null;
 
       const avgF = c.frets.reduce((a, b) => a + b, 0) / c.frets.length;
-      const cost = fretSpan * 1.4 + stringSpan * 0.9 + Math.abs(avgF - posPref) * 0.25;
-      return { midis: c.midis, cost };
+      const toLast =
+        lastPos == null
+          ? 0
+          : Math.abs(avgF - lastPos.fret) * 0.55 + Math.abs((minS + maxS) / 2 - lastPos.string) * 1.25;
+      const bassString = Math.min(...c.strings);
+      const cost =
+        fretSpan * 1.4 +
+        stringSpan * 0.9 +
+        Math.abs(avgF - posPref) * 0.25 +
+        toLast +
+        bassString * 0.35; // 低弦寄りをほんのり優先
+
+      // anchor: bass note position (lowest string, then lowest fret)
+      const anchor = c.strings
+        .map((s, i) => ({ string: s, fret: c.frets[i]!, midi: c.midis[i]! }))
+        .sort((a, b) => a.string - b.string || a.fret - b.fret)[0]!;
+      return { midis: c.midis, cost, anchorPos: { string: anchor.string, fret: anchor.fret } };
     })
-    .filter((x): x is { midis: number[]; cost: number } => x != null)
+    .filter(
+      (x): x is { midis: number[]; cost: number; anchorPos: LastPosition } => x != null,
+    )
     .sort((a, b) => a.cost - b.cost);
 
   return playable[0] ?? null;
@@ -389,7 +417,21 @@ export function generatePhraseCandidate(args: {
 
   const events: PhraseEvent[] = [];
   let lastMidi: number | null = null;
+  let lastPos: LastPosition | null = null;
   const occupied = new Set<number>();
+  const starts = new Set<number>();
+  const blockedStarts = new Set<number>(); // prevent 8th-note starts adjacent to chord hits
+
+  const occupy = (startStep: number, durationEighth: number) => {
+    for (let i = 0; i < durationEighth; i += 1) occupied.add(startStep + i);
+  };
+  const blockAdjacentEighthStarts = (startStep: number, durationEighth: number) => {
+    // “8分音符” は odd step にしか置かない方針なので、和音の前後の odd step だけブロックする。
+    const before = startStep - 1;
+    const after = startStep + durationEighth;
+    if (before >= 0 && before % 2 === 1) blockedStarts.add(before);
+    if (after % 2 === 1) blockedStarts.add(after);
+  };
 
   // モチーフ（候補ごとに固定して反復しやすくする）
   const motif =
@@ -397,77 +439,109 @@ export function generatePhraseCandidate(args: {
 
   for (let bar = 0; bar < song.progression.bars.length; bar += 1) {
     const barStart = bar * EIGHTH_NOTES_PER_BAR;
-    const barObj = song.progression.bars[bar]!;
 
-    // まず “典型フォーム” を2拍単位で埋める（滑らかなラインを優先）
-    const baseFormRate =
-      profile.guideToneStrict ? 0.65 : profile.motif ? 0.25 : profile.chordHits ? 0.45 : 0.5;
-    const levelBoost = (level - 1) * 0.08;
-    const densityBoost = Math.max(0, params.density - 0.35) * 0.6;
-    const formRate = Math.max(0, Math.min(0.95, baseFormRate + levelBoost + densityBoost));
+    // 4分中心スロット（0,2,4,6）を骨格に、フォームで“最大1音”の8分装飾だけを許可する。
+    const slots = rhythmicSlotsForBar();
 
-    for (const seg of barObj.segments) {
-      // 2拍単位で分割（4拍セグメントは2回）
-      for (let beat = 0; beat < seg.beats; beat += 2) {
-        const startStep = barStart + beat * 2;
-        const nextStep = startStep + 4;
-        if (nextStep > total) continue;
-        if (!rng.bool(formRate)) continue;
-
-        const startGuide = guideTargets.get(startStep) ?? rng.pick(guideTonePcs(seg.chord));
-        const nextChord = chordAtStep(song.progression, Math.min(nextStep, total - 1));
-        const nextGuide = guideTargets.get(nextStep) ?? rng.pick(guideTonePcs(nextChord));
-
-        const chordPcs = chordTonePcs(seg.chord);
-        const scalePcs = seg.chord.scalePcs;
-        const space =
-          profile.guideToneStrict
-            ? Math.max(0.15, 0.65 - params.density)
-            : Math.max(0.05, 0.55 - params.density);
-        const form = generateTwoBeatForm({
-          rng,
-          startGuidePc: startGuide,
-          nextGuidePc: nextGuide,
-          chordPcs,
-          scalePcs,
-          chromaticRate: params.chromaticRate,
-          space,
-          lastMidi,
-        });
-
-        for (let i = 0; i < form.pcs.length; i += 1) {
-          const step = startStep + i;
-          if (step >= total) continue;
-          const pc = form.pcs[i];
-          if (pc == null) continue;
-          const midi = chooseMidiNearPosition(rng, pc, params.maxFret, params.positionPreference, lastMidi);
-          events.push({ kind: "note", stepEighth: step, durationEighth: 1, midi });
-          occupied.add(step);
-          lastMidi = midi;
-        }
-      }
+    // 全styleで「薄い chord hit」を入れる余地を作る（JoePass/JimHallはやや多め）
+    const baseChordHitRate = clamp01(params.chordHitRate * (profile.chordHits ? 1.0 : 0.7));
+    const chordHitSteps = new Set<number>();
+    for (const localStep of [2, 6] as const) {
+      const step = barStart + localStep;
+      if (step >= total) continue;
+      if (!rng.bool(baseChordHitRate * 0.55)) continue;
+      chordHitSteps.add(step);
     }
 
-    // Joe Pass/Jim Hall系: バックビート（2・4）に軽いコンピングを混ぜると“弾き語り感”が出やすい
-    if (profile.chordHits) {
-      for (const localStep of [2, 6] as const) {
-        const step = barStart + localStep;
+    // 2拍単位(=4 eighth)でフォーム生成: start(0)->next strong(4) / start(4)->next bar strong
+    for (const startLocal of [0, 4] as const) {
+      const startStep = barStart + startLocal;
+      const nextStrongStep = startStep + 4;
+      if (startStep >= total) continue;
+      if (nextStrongStep > total) continue;
+
+      // chord hit が絡む場合はフォームの8分装飾を抑制（前後に置けないため）
+      const blocksDecoration =
+        chordHitSteps.has(startStep + 2) ||
+        chordHitSteps.has(startStep + 6) ||
+        occupied.has(startStep + 1) ||
+        occupied.has(startStep + 3);
+
+      const startChord = chordAtStep(song.progression, startStep);
+      const nextChord = chordAtStep(song.progression, Math.min(nextStrongStep, total - 1));
+      const startGuide = guideTargets.get(startStep) ?? rng.pick(guideTonePcs(startChord));
+      const nextGuide = guideTargets.get(nextStrongStep) ?? rng.pick(guideTonePcs(nextChord));
+
+      const space =
+        profile.guideToneStrict
+          ? Math.max(0.25, 0.7 - params.density)
+          : Math.max(0.15, 0.6 - params.density);
+
+      const form = generateTwoBeatForm({
+        rng,
+        startGuidePc: startGuide,
+        nextGuidePc: nextGuide,
+        chordPcs: chordTonePcs(startChord),
+        scalePcs: startChord.scalePcs,
+        chromaticRate: blocksDecoration ? Math.min(0.1, params.chromaticRate) : params.chromaticRate,
+        space,
+      });
+
+      for (const fe of form.events) {
+        const step = startStep + fe.offsetEighth;
         if (step >= total) continue;
+        if (blockedStarts.has(step)) continue;
         if (occupied.has(step)) continue;
-        if (!rng.bool(clamp01(params.chordHitRate * 0.85))) continue;
-        const chord = chordAtStep(song.progression, step);
-        const hit = chordHitMidis(rng, chordTonePcs(chord), params.maxFret, params.positionPreference);
-        if (!hit) continue;
-        events.push({ kind: "chordHit", stepEighth: step, durationEighth: 1, midis: hit });
-        occupied.add(step);
+        if (chordHitSteps.has(step) || chordHitSteps.has(step - 1) || chordHitSteps.has(step + 1)) continue;
+
+        const strong = isStrongStep(step);
+        const { midi, pos } = chooseMidiNearLastPosition({
+          rng,
+          pc: fe.pc,
+          maxFret: params.maxFret,
+          positionPreference: params.positionPreference,
+          lastMidi,
+          lastPos,
+          strong,
+        });
+        events.push({ kind: "note", stepEighth: step, durationEighth: fe.durationEighth, midi });
+        starts.add(step);
+        occupy(step, fe.durationEighth);
+        lastMidi = midi;
+        if (pos) lastPos = pos;
       }
     }
 
-    // 次に、残りを従来ロジックで補完（密度やstyleの揺らぎを担保）
-    const slots = rhythmicSlotsForBar(rng, params.density, level);
+    // chord hits: occupy first so later notes won't collide
+    for (const step of chordHitSteps) {
+      if (step >= total) continue;
+      if (blockedStarts.has(step)) continue;
+      if (starts.has(step - 1)) continue; // avoid 8th right before
+      if (occupied.has(step) || occupied.has(step + 1)) continue;
+      const chord = chordAtStep(song.progression, step);
+      const hit = chordHitMidis(
+        rng,
+        chord,
+        chordTonePcs(chord),
+        params.maxFret,
+        params.positionPreference,
+        lastPos,
+      );
+      if (!hit) continue;
+      const dur = 2;
+      events.push({ kind: "chordHit", stepEighth: step, durationEighth: dur, midis: hit.midis });
+      starts.add(step);
+      occupy(step, dur);
+      blockAdjacentEighthStarts(step, dur);
+      lastPos = hit.anchorPos;
+      lastMidi = Math.max(...hit.midis);
+    }
+
+    // モチーフ/追加補完は “4つ打ちスロット” のみ。8分連打は禁止（motifは2音までに制限）。
     for (const localStep of slots) {
       const step = barStart + localStep;
       if (step >= total) continue;
+      if (blockedStarts.has(step)) continue;
       if (occupied.has(step)) continue;
 
       const chord = chordAtStep(song.progression, step);
@@ -477,19 +551,8 @@ export function generatePhraseCandidate(args: {
       const isStrong = localStep === 0 || localStep === 4;
       const isD7 = chord.text === "D7";
 
-      // JoePassType: 和音ヒットを時々差し込む（ただし強拍は単音優先で安定させる）
-      if (profile.chordHits && !isStrong && rng.bool(clamp01(params.chordHitRate))) {
-        const hit = chordHitMidis(rng, chordPcs, params.maxFret, params.positionPreference);
-        if (hit) {
-          events.push({
-            kind: "chordHit",
-            stepEighth: step,
-            durationEighth: 1,
-            midis: hit,
-          });
-          continue;
-        }
-      }
+      // chord hit は既に確保済み
+      if (chordHitSteps.has(step)) continue;
 
       // 骨格: 強拍は guide tones を最優先（BasicGuideToneは特に固く）
       let targetPc: PitchClass;
@@ -513,46 +576,40 @@ export function generatePhraseCandidate(args: {
       }
 
       // モチーフを挿入（強拍付近で開始しやすい）
-      if (motif && rng.bool(clamp01(params.motifRate)) && (isStrong || rng.bool(0.4))) {
-        const pcs = applyMotifFromStartPc(targetPc, motif);
-        let local = step;
-        for (const pc of pcs) {
-          if (local >= barStart + EIGHTH_NOTES_PER_BAR) break;
-          const midi = chooseMidiNearPosition(
-            rng,
-            pc,
-            params.maxFret,
-            params.positionPreference,
-            lastMidi,
-          );
-          events.push({ kind: "note", stepEighth: local, durationEighth: 1, midi });
-          lastMidi = midi;
-          local += 1;
-        }
+      if (motif && rng.bool(clamp01(params.motifRate)) && (isStrong || rng.bool(0.35))) {
+        // 4分中心を崩さない: 2音だけ（次の4分で続きは書かない）
+        const pcs = applyMotifFromStartPc(targetPc, motif).slice(0, 2);
+        const pc = pcs[0]!;
+        const { midi, pos } = chooseMidiNearLastPosition({
+          rng,
+          pc,
+          maxFret: params.maxFret,
+          positionPreference: params.positionPreference,
+          lastMidi,
+          lastPos,
+          strong: isStrong,
+        });
+        events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
+        occupy(step, 2);
+        lastMidi = midi;
+        if (pos) lastPos = pos;
         continue;
       }
 
-      // approach/enclosure: strong beat 直前を優先的に装飾（後で採点に効く）
-      const useEnclosure = profile.motif || style === "ModernBebopType" || level >= 3;
-      const decoration = approachOrEnclosure(rng, targetPc, params.chromaticRate, useEnclosure);
-
-      for (let i = 0; i < decoration.length; i += 1) {
-        const decoratedPc = decoration[i]!;
-        const offset = decoration.length >= 2 ? -(decoration.length - 1 - i) : 0;
-        const decoratedStep = step + offset;
-        if (decoratedStep < barStart) continue;
-
-        const midi = chooseMidiNearPosition(
-          rng,
-          decoratedPc,
-          params.maxFret,
-          params.positionPreference,
-          lastMidi,
-        );
-
-        events.push({ kind: "note", stepEighth: decoratedStep, durationEighth: 1, midi });
-        lastMidi = midi;
-      }
+      const { midi, pos } = chooseMidiNearLastPosition({
+        rng,
+        pc: targetPc,
+        maxFret: params.maxFret,
+        positionPreference: params.positionPreference,
+        lastMidi,
+        lastPos,
+        strong: isStrong,
+      });
+      events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
+      starts.add(step);
+      occupy(step, 2);
+      lastMidi = midi;
+      if (pos) lastPos = pos;
     }
   }
 
@@ -669,7 +726,15 @@ function ensureD7HasFSharp(
 
   // D7区間のどこかにF#を差し込む
   const insertAt = d7Steps[rng.int(0, d7Steps.length)];
-  const midi = chooseMidiNearPosition(rng, 6, params.maxFret, params.positionPreference, null);
+  const midi = chooseMidiNearLastPosition({
+    rng,
+    pc: 6,
+    maxFret: params.maxFret,
+    positionPreference: params.positionPreference,
+    lastMidi: null,
+    lastPos: null,
+    strong: false,
+  }).midi;
   const patched: PhraseEvent[] = [...events, { kind: "note", stepEighth: insertAt, durationEighth: 1, midi }];
   return normalizeEvents(patched, song, style, params.maxFret);
 }
