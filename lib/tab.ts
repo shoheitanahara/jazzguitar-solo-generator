@@ -17,6 +17,7 @@ type FingeringOption = {
   positions: readonly GuitarPosition[]; // chordHitは複数
   avgFret: number;
   avgString: number;
+  anchorString: number;
   fretSpan: number;
   minString: number;
   maxString: number;
@@ -48,6 +49,8 @@ function toOption(positions: readonly GuitarPosition[]): FingeringOption {
     positions,
     avgFret: avg(frets),
     avgString: avg(strings),
+    // 単音はその弦、和音は“ベース側”の弦をアンカーにする（弦移動評価が直感に合いやすい）
+    anchorString: positions.length <= 1 ? (positions[0]?.string ?? 0) : minString,
     fretSpan: Math.max(...frets) - Math.min(...frets),
     minString,
     maxString,
@@ -144,10 +147,13 @@ type DpCell = {
 
 function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number): number {
   const moveFret = Math.abs(a.avgFret - b.avgFret);
-  const moveString = Math.abs(a.avgString - b.avgString);
+  const moveString = Math.abs(a.anchorString - b.anchorString);
   const spanPenalty = b.fretSpan * 0.55;
   const stringSpanPenalty = b.stringSpan * 0.45;
   const posPenalty = Math.abs(b.avgFret - posPref) * 0.12;
+  const stringSkipPenalty = moveString === 2 ? 3.5 : moveString >= 3 ? 8.0 : 0;
+  const sameStringStepBonus =
+    a.stringCount === 1 && b.stringCount === 1 && moveString === 0 && moveFret > 0 && moveFret <= 2 ? -0.6 : 0;
 
   // 高音弦↔低音弦の“行き来”を抑える（音色が急に変わってジャズギターらしさが落ちる）
   const regionA = a.avgString <= 2 ? "low" : a.avgString >= 4 ? "high" : "mid";
@@ -160,10 +166,12 @@ function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number)
 
   return (
     moveFret * 1.0 +
-    moveString * 2.0 +
+    moveString * 2.4 +
     spanPenalty +
     stringSpanPenalty +
     posPenalty +
+    stringSkipPenalty +
+    sameStringStepBonus +
     regionSwitchPenalty +
     extremeStringPenalty
   );

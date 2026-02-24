@@ -70,6 +70,8 @@ export function explainPhrase(args: {
   if (phrase.style === "JoePassType") bullets.push(`Chord hits: ${chordHitCount} (strum-like)`);
   if (phrase.style === "PatMartinoType")
     bullets.push(`Motif repetition emphasized (motifRate=${phrase.params.motifRate.toFixed(2)})`);
+  if (phrase.style === "ChordTone4NoteType")
+    bullets.push("Chord-tone-only mode: quarter-note arpeggio feel (no scale/chromatic notes).");
   if (phrase.style === "BasicGuideTone") bullets.push("Beginner mode: prioritize guide-tone landings.");
 
   bullets.push(

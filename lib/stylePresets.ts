@@ -33,6 +33,11 @@ export const STYLE_OPTIONS: readonly StyleOption[] = [
     description: "Higher density with more approaches/enclosures.",
   },
   {
+    id: "ChordTone4NoteType",
+    label: "Chord Tone 4-Note (Chord tones only)",
+    description: "Chord tones only. Simple 4-note/quarter feel. L1 stacks from low-string root; L6 varies order.",
+  },
+  {
     id: "BasicGuideTone",
     label: "Basic Guide Tone",
     description: "Beginner-friendly. Prioritizes 3rd/7th landings on strong beats.",
@@ -49,7 +54,7 @@ function clampInt(min: number, x: number, max: number): number {
 }
 
 function levelFactor(level: Level): number {
-  return (level - 1) / 4; // 0..1
+  return (level - 1) / 5; // 0..1
 }
 
 export function styleOptionOf(style: Style): StyleOption {
@@ -113,6 +118,14 @@ export function paramsForStyle(style: Style, level: Level): GeneratorParams {
       motifRate: 0.22 + 0.18 * lf,
       maxFret: 12 + 3 * lf,
       positionPreference: 9,
+    },
+    ChordTone4NoteType: {
+      density: 0.18 + 0.08 * lf,
+      chromaticRate: 0, // strictly chord tones only
+      chordHitRate: 0, // single-note only for this style
+      motifRate: 0,
+      maxFret: 10 + 3 * lf,
+      positionPreference: 7,
     },
     BasicGuideTone: {
       density: 0.22 + 0.16 * lf,

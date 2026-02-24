@@ -3,7 +3,7 @@ import type { PitchClass } from "./music/types";
 import { chordAtStep, EIGHTH_NOTES_PER_BAR, progressionTotalEighthNotes } from "./music/progression";
 import { chordTonePcs, guideTonePcs } from "./music/chords";
 import { mod12 } from "./music/notes";
-import { isPlayableMidi, midiCandidatesForPitchClass, positionsForMidi } from "./guitar";
+import { isPlayableMidi, midiCandidatesForPitchClass, positionsForMidi, STANDARD_TUNING_MIDI } from "./guitar";
 import type { Rng } from "./random";
 import { generateTwoBeatForm } from "./forms";
 
@@ -13,9 +13,10 @@ export type Style =
   | "JimHallType"
   | "GrantGreenType"
   | "ModernBebopType"
+  | "ChordTone4NoteType"
   | "BasicGuideTone";
 
-export type Level = 1 | 2 | 3 | 4 | 5;
+export type Level = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type GeneratorParams = {
   density: number; // 0..1
@@ -62,7 +63,7 @@ function clamp01(x: number): number {
 }
 
 function levelFactor(level: Level): number {
-  return (level - 1) / 4; // 0..1
+  return (level - 1) / 5; // 0..1
 }
 
 type StyleProfile = {
@@ -83,6 +84,8 @@ function styleProfile(style: Style): StyleProfile {
       return { chordHits: false, motif: false, guideToneStrict: false };
     case "ModernBebopType":
       return { chordHits: false, motif: false, guideToneStrict: false };
+    case "ChordTone4NoteType":
+      return { chordHits: false, motif: false, guideToneStrict: true };
     case "BasicGuideTone":
       return { chordHits: false, motif: false, guideToneStrict: true };
     default: {
@@ -102,6 +105,81 @@ function rhythmicSlotsForBar(): readonly number[] {
 // 強拍ルールは生成の内部ロジックに直接埋め込み、現段階では別データとして保持しない。
 
 type LastPosition = { string: number; fret: number };
+
+function orderedChordTonePcs(chord: { rootPc: PitchClass; chordToneIntervals: readonly number[] }): PitchClass[] {
+  const seen = new Set<number>();
+  const out: PitchClass[] = [];
+  for (const i of chord.chordToneIntervals) {
+    const pc = mod12(chord.rootPc + i);
+    if (seen.has(pc)) continue;
+    seen.add(pc);
+    out.push(pc);
+  }
+  return out;
+}
+
+function chooseRootOnLowString(args: {
+  rng: Rng;
+  rootPc: PitchClass;
+  maxFret: number;
+  positionPreference: number;
+  preferString: 0 | 1; // 6th or 5th
+}): { midi: number; pos: LastPosition } | null {
+  const { rng, rootPc, maxFret, positionPreference, preferString } = args;
+  const candidates = midiCandidatesForPitchClass(rootPc, 38, 62).filter((m) => isPlayableMidi(m, maxFret));
+  const scored = candidates
+    .flatMap((m) =>
+      positionsForMidi(m, maxFret)
+        .filter((p) => p.string === preferString)
+        .map((p) => ({
+          midi: m,
+          pos: { string: p.string, fret: p.fret },
+          score: Math.abs(p.fret - positionPreference) * 0.9,
+        })),
+    )
+    .sort((a, b) => a.score - b.score);
+  if (scored.length === 0) return null;
+  const take = Math.min(4, scored.length);
+  const chosen = scored[rng.int(0, take)]!;
+  return { midi: chosen.midi, pos: chosen.pos };
+}
+
+function chooseChordToneMidiAbove(args: {
+  rng: Rng;
+  pc: PitchClass;
+  maxFret: number;
+  positionPreference: number;
+  lastMidi: number;
+  lastPos: LastPosition;
+}): { midi: number; pos: LastPosition } | null {
+  const { rng, pc, maxFret, positionPreference, lastMidi, lastPos } = args;
+  const pool = midiCandidatesForPitchClass(pc, lastMidi + 1, Math.min(lastMidi + 24, 84)).filter((m) =>
+    isPlayableMidi(m, maxFret),
+  );
+  if (pool.length === 0) return null;
+
+  const scored = pool
+    .flatMap((m) =>
+      positionsForMidi(m, maxFret).map((p) => {
+        const fretDist = Math.abs(p.fret - positionPreference);
+        const toLastFret = Math.abs(p.fret - lastPos.fret);
+        const toLastString = Math.abs(p.string - lastPos.string);
+        // Prefer moving toward higher strings while stacking
+        const wrongDir = Math.max(0, lastPos.string - p.string);
+        const moveCost = toLastString * 2.3 + toLastFret * 0.95 + wrongDir * 2.1;
+        return {
+          midi: m,
+          pos: { string: p.string, fret: p.fret },
+          score: fretDist * 0.5 + moveCost,
+        };
+      }),
+    )
+    .sort((a, b) => a.score - b.score);
+
+  const take = Math.min(6, scored.length);
+  const chosen = scored[rng.int(0, take)]!;
+  return { midi: chosen.midi, pos: chosen.pos };
+}
 
 function chooseMidiNearLastPosition(args: {
   rng: Rng;
@@ -135,10 +213,14 @@ function chooseMidiNearLastPosition(args: {
       const fretDist = Math.abs(p.fret - positionPreference);
       const toLastFret = lastPos ? Math.abs(p.fret - lastPos.fret) : 0;
       const toLastString = lastPos ? Math.abs(p.string - lastPos.string) : 0;
+      const stringSkipPenalty =
+        lastPos == null ? 0 : toLastString === 2 ? 7.5 : toLastString >= 3 ? 15 : 0;
+      const sameStringStepBonus =
+        lastPos != null && toLastString === 0 && toLastFret > 0 && toLastFret <= 2 ? -1.2 : 0;
       // Strong beats: especially avoid string jumps / big shifts.
       const moveCost = strong ? toLastString * 2.6 + toLastFret * 1.1 : toLastString * 2.0 + toLastFret * 0.85;
       const positionCost = fretDist * 0.7;
-      return { p, cost: moveCost + positionCost };
+      return { p, cost: moveCost + positionCost + stringSkipPenalty + sameStringStepBonus };
     });
     scored.sort((a, b) => a.cost - b.cost);
     return { pos: scored[0]!.p, cost: scored[0]!.cost };
@@ -149,13 +231,54 @@ function chooseMidiNearLastPosition(args: {
       const { pos, cost: posCost } = bestPosCost(m);
       const leap = lastMidi == null ? 0 : Math.abs(m - lastMidi);
       const leapCost = (strong ? 0.55 : 0.35) * leap;
-      return { m, pos, score: posCost + leapCost };
+      const repeatPenalty = lastMidi != null && m === lastMidi ? 8.0 : 0;
+      return { m, pos, score: posCost + leapCost + repeatPenalty };
     })
     .sort((a, b) => a.score - b.score);
 
   const take = Math.min(5, scored.length);
   const chosen = scored[rng.int(0, take)]!;
   return { midi: chosen.m, pos: chosen.pos };
+}
+
+function chooseMidiFromPcPoolNearLastWindow(args: {
+  rng: Rng;
+  pcs: readonly PitchClass[];
+  maxFret: number;
+  positionPreference: number;
+  lastMidi: number | null;
+  lastPos: LastPosition | null;
+}): { midi: number; pos: LastPosition | null } | null {
+  const { rng, pcs, maxFret, positionPreference, lastMidi, lastPos } = args;
+  if (pcs.length === 0) return null;
+  if (lastPos == null) return null;
+
+  const allowed = new Set<number>(pcs);
+  const candidates: Array<{ midi: number; pos: LastPosition; score: number }> = [];
+
+  for (let ds = -1; ds <= 1; ds += 1) {
+    const s = lastPos.string + ds;
+    if (s < 0 || s > 5) continue;
+    const open = STANDARD_TUNING_MIDI[s]!;
+    for (let df = -2; df <= 2; df += 1) {
+      const f = lastPos.fret + df;
+      if (f < 0 || f > maxFret) continue;
+      const midi = open + f;
+      if (midi < 45 || midi > 80) continue;
+      const pc = mod12(midi);
+      if (!allowed.has(pc)) continue;
+      if (lastMidi != null && midi === lastMidi) continue;
+
+      const score = Math.abs(df) * 1.0 + Math.abs(ds) * 1.8 + Math.abs(f - positionPreference) * 0.25;
+      candidates.push({ midi, pos: { string: s, fret: f }, score });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.score - b.score);
+  const take = Math.min(6, candidates.length);
+  const chosen = candidates[rng.int(0, take)]!;
+  return { midi: chosen.midi, pos: chosen.pos };
 }
 
 function pcDistance(a: PitchClass, b: PitchClass): number {
@@ -191,7 +314,12 @@ function computeGuideTargets(song: Song, rng: Rng): Map<number, PitchClass> {
     // 同点は少しランダムに揺らす
     const bestDist = scored[0]!.dist;
     const bests = scored.filter((x) => x.dist === bestDist);
-    const chosen = bests[rng.int(0, bests.length)]!.pc;
+    let chosen = bests[rng.int(0, bests.length)]!.pc;
+    // “同じガイドトーンの連打” を避ける（メロディックさ優先）
+    if (bestDist === 0 && guides.length >= 2 && chosen === prev && rng.bool(0.8)) {
+      const alts = scored.filter((x) => x.pc !== prev);
+      chosen = (alts[0]?.pc ?? chosen) as PitchClass;
+    }
     targets.set(step, chosen);
     prev = chosen;
   }
@@ -208,12 +336,13 @@ function choosePcNearLast(args: {
   if (lastMidi == null) return pool[rng.int(0, pool.length)]!;
 
   const lastPc = mod12(lastMidi);
-  // 近いPC（±2）を優先
-  const near = pool.filter((pc) => pcDistance(pc, lastPc) <= 2);
+  // 近いPC（±2）を優先。ただし“同音連打”を避けるため、候補があるなら同一PCは除外。
+  const poolNoSame = pool.length >= 2 ? pool.filter((pc) => pc !== lastPc) : pool;
+  const near = poolNoSame.filter((pc) => pcDistance(pc, lastPc) <= 2);
   if (near.length) return near[rng.int(0, near.length)]!;
 
   // 次点: 最短距離
-  const scored = pool
+  const scored = poolNoSame
     .map((pc) => ({ pc, dist: pcDistance(pc, lastPc) }))
     .sort((a, b) => a.dist - b.dist);
   const bestDist = scored[0]!.dist;
@@ -440,6 +569,129 @@ export function generatePhraseCandidate(args: {
   for (let bar = 0; bar < song.progression.bars.length; bar += 1) {
     const barStart = bar * EIGHTH_NOTES_PER_BAR;
 
+    if (style === "ChordTone4NoteType") {
+      // Chord tones only. Quarter-note feel.
+      // L1: low-string root stacking; L6: still chord tones only but more ordering variety.
+      const localSteps = [0, 2, 4, 6] as const;
+      let prevChordText: string | null = null;
+      let stackIndex = 0;
+
+      for (const ls of localSteps) {
+        const step = barStart + ls;
+        if (step >= total) continue;
+        if (occupied.has(step)) continue;
+
+        const chord = chordAtStep(song.progression, step);
+        const chordChanged = prevChordText != null && prevChordText !== chord.text;
+        if (prevChordText == null || chordChanged) {
+          stackIndex = 0;
+        }
+        prevChordText = chord.text;
+
+        const chordTonesOrdered = orderedChordTonePcs(chord);
+        const chordTones = chordTonesOrdered.length ? chordTonesOrdered : chordTonePcs(chord);
+
+        let targetPc: PitchClass;
+        if (level <= 1) {
+          // root -> 3rd -> 5th -> 7th (if exists), then wrap
+          targetPc = chordTonesOrdered[Math.min(stackIndex, Math.max(0, chordTonesOrdered.length - 1))] ?? chord.rootPc;
+        } else if (level >= 6) {
+          // varied chord-tone selection (still chord tones only), but prefer near the last note
+          const pool = chordTones.length ? chordTones : [chord.rootPc];
+          targetPc = choosePcNearLast({ rng, pool, lastMidi });
+        } else {
+          // mid levels: light rotation without leaving chord tones
+          const pool = chordTonesOrdered.length ? chordTonesOrdered : chordTones;
+          targetPc = pool[(stackIndex + rng.int(0, Math.min(2, Math.max(1, pool.length)))) % Math.max(1, pool.length)]!;
+        }
+
+        // MIDI choice:
+        // - L1: force low-string root at segment start and then stack upward
+        let midi: number;
+        let pos: LastPosition | null = null;
+        if (level <= 1 && stackIndex === 0) {
+          const prefer = rng.bool(0.55) ? (0 as const) : (1 as const);
+          const root =
+            chooseRootOnLowString({
+              rng,
+              rootPc: chord.rootPc,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              preferString: prefer,
+            }) ??
+            chooseRootOnLowString({
+              rng,
+              rootPc: chord.rootPc,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              preferString: prefer === 0 ? 1 : 0,
+            });
+          if (root) {
+            midi = root.midi;
+            pos = root.pos;
+          } else {
+            const chosen = chooseMidiNearLastPosition({
+              rng,
+              pc: chord.rootPc,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              lastMidi,
+              lastPos,
+              strong: true,
+            });
+            midi = chosen.midi;
+            pos = chosen.pos;
+          }
+        } else if (level <= 1 && lastMidi != null && lastPos != null) {
+          const next = chooseChordToneMidiAbove({
+            rng,
+            pc: targetPc,
+            maxFret: params.maxFret,
+            positionPreference: params.positionPreference,
+            lastMidi,
+            lastPos,
+          });
+          if (next) {
+            midi = next.midi;
+            pos = next.pos;
+          } else {
+            const chosen = chooseMidiNearLastPosition({
+              rng,
+              pc: targetPc,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              lastMidi,
+              lastPos,
+              strong: false,
+            });
+            midi = chosen.midi;
+            pos = chosen.pos;
+          }
+        } else {
+          const chosen = chooseMidiNearLastPosition({
+            rng,
+            pc: targetPc,
+            maxFret: params.maxFret,
+            positionPreference: params.positionPreference,
+            lastMidi,
+            lastPos,
+            strong: isStrongStep(step),
+          });
+          midi = chosen.midi;
+          pos = chosen.pos;
+        }
+
+        events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
+        starts.add(step);
+        occupy(step, 2);
+        lastMidi = midi;
+        if (pos) lastPos = pos;
+
+        stackIndex += 1;
+      }
+      continue;
+    }
+
     // 4分中心スロット（0,2,4,6）を骨格に、フォームで“最大1音”の8分装飾だけを許可する。
     const slots = rhythmicSlotsForBar();
 
@@ -596,15 +848,29 @@ export function generatePhraseCandidate(args: {
         continue;
       }
 
-      const { midi, pos } = chooseMidiNearLastPosition({
-        rng,
-        pc: targetPc,
-        maxFret: params.maxFret,
-        positionPreference: params.positionPreference,
-        lastMidi,
-        lastPos,
-        strong: isStrong,
-      });
+      const pickedWeak =
+        !isStrong
+          ? chooseMidiFromPcPoolNearLastWindow({
+              rng,
+              pcs: rng.bool(0.65) ? chordPcs : chord.scalePcs,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              lastMidi,
+              lastPos,
+            })
+          : null;
+
+      const { midi, pos } =
+        pickedWeak ??
+        chooseMidiNearLastPosition({
+          rng,
+          pc: targetPc,
+          maxFret: params.maxFret,
+          positionPreference: params.positionPreference,
+          lastMidi,
+          lastPos,
+          strong: isStrong,
+        });
       events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
       starts.add(step);
       occupy(step, 2);

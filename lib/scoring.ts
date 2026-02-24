@@ -8,11 +8,14 @@ import { positionsForMidi } from "./guitar";
 export type ScoreBreakdown = {
   strongBeatChordToneScore: number;
   guideToneScore: number;
+  chordToneUsageScore: number;
   voiceLeadingScore: number;
   tensionResolutionScore: number;
+  melodicPenalty: number;
   rangePenalty: number;
   leapPenalty: number;
   guitarIdiomaticScore: number;
+  chordHitVoicingPenalty: number;
   rhythmVarietyScore: number;
   d7ResolutionRuleScore: number;
   total: number;
@@ -42,6 +45,68 @@ function eventAnchorMidi(event: PhraseEvent): number {
   if (event.kind === "note") return event.midi;
   // chordHitは左手の“基準”として最低音（bass）を代表にする
   return Math.min(...event.midis);
+}
+
+function minFretSpanForChordHit(midis: readonly number[], maxFret: number): number | null {
+  const per = midis.map((m) => positionsForMidi(m, maxFret));
+  if (per.some((p) => p.length === 0)) return null;
+
+  let bestSpan = Number.POSITIVE_INFINITY;
+  const dfs = (idx: number, usedStrings: Set<number>, frets: number[]) => {
+    if (idx >= per.length) {
+      const span = Math.max(...frets) - Math.min(...frets);
+      if (span < bestSpan) bestSpan = span;
+      return;
+    }
+    for (const p of per[idx]!) {
+      if (usedStrings.has(p.string)) continue;
+      // prune
+      if (frets.length) {
+        const minF = Math.min(...frets, p.fret);
+        const maxF = Math.max(...frets, p.fret);
+        if (maxF - minF >= bestSpan) continue;
+      }
+      usedStrings.add(p.string);
+      dfs(idx + 1, usedStrings, [...frets, p.fret]);
+      usedStrings.delete(p.string);
+    }
+  };
+  dfs(0, new Set<number>(), []);
+  return Number.isFinite(bestSpan) ? bestSpan : null;
+}
+
+function estimatePositionsForEvents(args: {
+  events: readonly PhraseEvent[];
+  maxFret: number;
+  positionPreference: number;
+}): Array<{ stepEighth: number; string: number; fret: number; midi: number }> {
+  const { events, maxFret, positionPreference } = args;
+  const ordered = events.slice().sort((a, b) => a.stepEighth - b.stepEighth);
+  const out: Array<{ stepEighth: number; string: number; fret: number; midi: number }> = [];
+
+  let last: { string: number; fret: number } | null = null;
+  for (const e of ordered) {
+    const midi = eventAnchorMidi(e);
+    const pos = positionsForMidi(midi, maxFret);
+    if (pos.length === 0) continue;
+
+    const scored = pos
+      .map((p) => {
+        const pref = Math.abs(p.fret - positionPreference) * 0.55;
+        const move =
+          last == null
+            ? 0
+            : Math.abs(p.string - last.string) * 2.2 + Math.abs(p.fret - last.fret) * 0.9;
+        return { p, score: pref + move };
+      })
+      .sort((a, b) => a.score - b.score);
+
+    const best = scored[0]!.p;
+    out.push({ stepEighth: e.stepEighth, string: best.string, fret: best.fret, midi });
+    last = { string: best.string, fret: best.fret };
+  }
+
+  return out;
 }
 
 function collectStepMap(events: readonly PhraseEvent[]): Map<number, PhraseEvent> {
@@ -76,20 +141,26 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
 
   let strongBeatChordToneScore = 0;
   let guideToneScore = 0;
+  let chordToneUsageScore = 0;
   let voiceLeadingScore = 0;
   let tensionResolutionScore = 0;
+  let melodicPenalty = 0;
   let rangePenalty = 0;
   let leapPenalty = 0;
   let guitarIdiomaticScore = 0;
+  let chordHitVoicingPenalty = 0;
   let rhythmVarietyScore = 0;
   let d7ResolutionRuleScore = 0;
 
   // strong beat / guide tone
+  let strongCount = 0;
   for (let step = 0; step < totalSteps; step += 1) {
     if (!isStrongStep(step)) continue;
+    strongCount += 1;
     const e = stepMap.get(step);
     if (!e) {
-      strongBeatChordToneScore -= 1.2;
+      // 強拍が空白はかなり悪い（学習用途でも“骨格”が消える）
+      strongBeatChordToneScore -= 1.4;
       guideToneScore -= 0.6;
       continue;
     }
@@ -99,13 +170,31 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
 
     const primary = eventPrimaryMidi(e);
     const pc = mod12(primary);
-    if (chordPcs.includes(pc)) strongBeatChordToneScore += 2.0;
-    else strongBeatChordToneScore -= 2.2;
+    if (chordPcs.includes(pc)) strongBeatChordToneScore += 1.0;
+    else strongBeatChordToneScore -= 1.2;
 
-    if (guidePcs.includes(pc)) guideToneScore += 1.8;
-    else if (chordPcs.includes(pc)) guideToneScore += 0.3;
+    if (guidePcs.includes(pc)) guideToneScore += 1.0;
+    else if (chordPcs.includes(pc)) guideToneScore += 0.25;
     else guideToneScore -= 0.8;
   }
+
+  // normalize: 32 bars => strong beats are many; keep this category bounded
+  if (strongCount > 0) {
+    strongBeatChordToneScore = (strongBeatChordToneScore / strongCount) * 10;
+    guideToneScore = (guideToneScore / strongCount) * 8;
+  }
+
+  // chord tone usage (all notes, not just strong beats)
+  for (const e of candidate.events) {
+    const chord = chordAtStep(song.progression, e.stepEighth);
+    const chordPcs = chordTonePcs(chord);
+    const guidePcs = guideTonePcs(chord);
+    const pc = mod12(eventPrimaryMidi(e));
+    if (chordPcs.includes(pc)) chordToneUsageScore += 0.22;
+    else chordToneUsageScore -= 0.12;
+    if (guidePcs.includes(pc)) chordToneUsageScore += 0.08;
+  }
+  chordToneUsageScore = chordToneUsageScore / Math.max(1, candidate.events.length) * 8;
 
   // voice leading: 各コード切り替わり直前の音が、次コードのガイドトーンへ近いほど加点
   // 今回は2拍ごとに切り替わるので、bar内 step=3,7 を「終端」扱い（8分刻み）
@@ -131,7 +220,7 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
           return Math.min(d, 12 - d);
         }),
       );
-      voiceLeadingScore += (6 - pcDist) * 0.25;
+      voiceLeadingScore += (6 - pcDist) * 0.14;
     }
   }
 
@@ -153,8 +242,40 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
     const nextChord = chordAtStep(song.progression, next.stepEighth);
     const nextChordTones = chordTonePcs(nextChord);
     const nextPc = mod12(eventPrimaryMidi(next));
-    if (nextChordTones.includes(nextPc)) tensionResolutionScore += 0.35;
-    else tensionResolutionScore -= 0.2;
+    if (nextChordTones.includes(nextPc)) tensionResolutionScore += 0.25;
+    else tensionResolutionScore -= 0.15;
+  }
+
+  // melodic penalty: same pitch repeated in the same bar (not melodic)
+  for (let bar = 0; bar < song.progression.bars.length; bar += 1) {
+    const barStart = bar * EIGHTH_NOTES_PER_BAR;
+    const barEnd = barStart + EIGHTH_NOTES_PER_BAR;
+    const inBar = candidate.events
+      .filter((e) => e.stepEighth >= barStart && e.stepEighth < barEnd)
+      .slice()
+      .sort((a, b) => a.stepEighth - b.stepEighth);
+    if (inBar.length < 2) continue;
+
+    const midis = inBar.map((e) => eventPrimaryMidi(e));
+    const uniq = new Set(midis);
+    if (inBar.length >= 3 && uniq.size <= 1) melodicPenalty -= 1.6;
+
+    // Many occurrences of the same note (even if not consecutive) is not melodic.
+    const countByMidi = new Map<number, number>();
+    for (const m of midis) countByMidi.set(m, (countByMidi.get(m) ?? 0) + 1);
+    const maxCount = Math.max(...[...countByMidi.values()]);
+    if (maxCount >= 3) melodicPenalty -= (maxCount - 2) * 0.65;
+
+    let streak = 1;
+    for (let i = 1; i < midis.length; i += 1) {
+      if (midis[i] === midis[i - 1]) {
+        streak += 1;
+        melodicPenalty -= 0.9; // consecutive same note
+        if (streak >= 3) melodicPenalty -= 0.5; // extra for long streaks
+      } else {
+        streak = 1;
+      }
+    }
   }
 
   // range + leaps
@@ -183,6 +304,8 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
 
   // guitar idiomatic: ポジション周辺で成立しやすいほど加点（あくまで簡易）
   const posPref = candidate.params.positionPreference;
+  let posPrefSum = 0;
+  let posPrefCount = 0;
   for (const e of candidate.events) {
     if (e.kind !== "note") continue;
     const pos = positionsForMidi(e.midi, candidate.params.maxFret);
@@ -191,35 +314,43 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
       continue;
     }
     const best = Math.min(...pos.map((p) => Math.abs(p.fret - posPref)));
-    guitarIdiomaticScore += clamp(0, 1.2 - best * 0.25, 1.2);
+    posPrefSum += clamp(0, 1.2 - best * 0.25, 1.2);
+    posPrefCount += 1;
+  }
+  guitarIdiomaticScore += (posPrefSum / Math.max(1, posPrefCount)) * 6;
+
+  // guitar idiomatic guardrail: “想定運指” を復元して、弦飛び越え/同弦隣接を評価
+  const estimated = estimatePositionsForEvents({
+    events: candidate.events,
+    maxFret: candidate.params.maxFret,
+    positionPreference: candidate.params.positionPreference,
+  });
+  for (let i = 1; i < estimated.length; i += 1) {
+    const prev = estimated[i - 1]!;
+    const cur = estimated[i]!;
+    const sd = Math.abs(cur.string - prev.string);
+    const fd = Math.abs(cur.fret - prev.fret);
+    const move = sd * 2.2 + fd * 0.9;
+
+    if (move > 9) guitarIdiomaticScore -= (move - 9) * 0.22;
+    // 弦を1つ飛ばし（例: 3->1 / 4->2）
+    if (sd === 2) guitarIdiomaticScore -= 1.8;
+    if (sd >= 3) guitarIdiomaticScore -= 3.2;
+
+    // 同弦の隣接フレットは加点（メロディックに聞こえやすい）
+    if (sd === 0 && fd === 1) guitarIdiomaticScore += 0.65;
+    if (sd === 0 && fd === 2) guitarIdiomaticScore += 0.3;
   }
 
-  // guitar idiomatic guardrail: 連続イベント間の“最小移動”が大きいほど減点（弦飛び越え/ポジション移動）
-  const ordered = candidate.events.slice().sort((a, b) => a.stepEighth - b.stepEighth);
-  for (let i = 1; i < ordered.length; i += 1) {
-    const a = eventAnchorMidi(ordered[i - 1]!);
-    const b = eventAnchorMidi(ordered[i]!);
-    const pa = positionsForMidi(a, candidate.params.maxFret);
-    const pb = positionsForMidi(b, candidate.params.maxFret);
-    if (pa.length === 0 || pb.length === 0) continue;
-
-    let bestMove = Number.POSITIVE_INFINITY;
-    let bestStringDelta = 0;
-    for (const x of pa) {
-      for (const y of pb) {
-        const sd = Math.abs(x.string - y.string);
-        const fd = Math.abs(x.fret - y.fret);
-        const move = sd * 2.2 + fd * 0.9;
-        if (move < bestMove) {
-          bestMove = move;
-          bestStringDelta = sd;
-        }
-      }
+  // chord hit voicing: hard to fret when spread too wide
+  for (const e of candidate.events) {
+    if (e.kind !== "chordHit") continue;
+    const span = minFretSpanForChordHit(e.midis, candidate.params.maxFret);
+    if (span == null) {
+      chordHitVoicingPenalty -= 4.0;
+      continue;
     }
-
-    // “遠すぎる移動”をしっかり減点（生成側が抑える前提なので、ここは保険）
-    if (bestMove > 9) guitarIdiomaticScore -= (bestMove - 9) * 0.18;
-    if (bestStringDelta >= 3) guitarIdiomaticScore -= 0.8;
+    if (span >= 5) chordHitVoicingPenalty -= 8.0;
   }
 
   // rhythm variety: 空白間隔が単調すぎると減点
@@ -251,7 +382,7 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
     const chord = chordAtStep(song.progression, e.stepEighth);
     return chord.text === "D7" && e.midis.some((m) => mod12(m) === 6);
   });
-  d7ResolutionRuleScore += hasFSharpOnD7 ? 2.0 : -4.0;
+  d7ResolutionRuleScore += hasFSharpOnD7 ? 1.4 : -2.2;
 
   // D7直後（Gm頭）に Gmのガイドトーン( Bb or F )が来ると加点
   for (let step = 0; step < totalSteps; step += 1) {
@@ -261,28 +392,34 @@ export function scoreCandidate(song: Song, candidate: PhraseCandidate): ScoreBre
     if (!e) continue;
     const pc = mod12(eventPrimaryMidi(e));
     // Gmのガイドトーン: Bb(10) or F(5)
-    if (pc === 10 || pc === 5) d7ResolutionRuleScore += 0.9;
+    if (pc === 10 || pc === 5) d7ResolutionRuleScore += 0.35;
   }
 
   const total =
     strongBeatChordToneScore +
     guideToneScore +
+    chordToneUsageScore +
     voiceLeadingScore +
     tensionResolutionScore +
+    melodicPenalty +
     rangePenalty +
     leapPenalty +
     guitarIdiomaticScore +
+    chordHitVoicingPenalty +
     rhythmVarietyScore +
     d7ResolutionRuleScore;
 
   return {
     strongBeatChordToneScore,
     guideToneScore,
+    chordToneUsageScore,
     voiceLeadingScore,
     tensionResolutionScore,
+    melodicPenalty,
     rangePenalty,
     leapPenalty,
     guitarIdiomaticScore,
+    chordHitVoicingPenalty,
     rhythmVarietyScore,
     d7ResolutionRuleScore,
     total,

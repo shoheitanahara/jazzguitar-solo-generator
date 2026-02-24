@@ -74,10 +74,10 @@ export function Controls(props: Props) {
       {/* Level は解説の直上に置いて “何が変わるか” を迷わないようにする */}
       <div className="grid gap-3">
         <Slider
-          label="Level (1–5)"
+          label="Level (1–6)"
           value={level}
           min={1}
-          max={5}
+          max={6}
           step={1}
           onChange={(v) => onChange({ level: v as Level })}
           format={(v) => String(Math.round(v))}
