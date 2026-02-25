@@ -236,47 +236,56 @@ function chooseMidiNearLastPosition(args: {
     })
     .sort((a, b) => a.score - b.score);
 
-  const take = Math.min(5, scored.length);
+  const take = Math.min(2, scored.length);
   const chosen = scored[rng.int(0, take)]!;
   return { midi: chosen.m, pos: chosen.pos };
 }
 
-function chooseMidiFromPcPoolNearLastWindow(args: {
+function chooseMidiFromFretboardWindow(args: {
   rng: Rng;
   pcs: readonly PitchClass[];
   maxFret: number;
   positionPreference: number;
   lastMidi: number | null;
   lastPos: LastPosition | null;
-}): { midi: number; pos: LastPosition | null } | null {
+  fretRange?: number;
+  stringRange?: number;
+}): { midi: number; pos: LastPosition } | null {
   const { rng, pcs, maxFret, positionPreference, lastMidi, lastPos } = args;
   if (pcs.length === 0) return null;
   if (lastPos == null) return null;
 
+  const fretR = args.fretRange ?? 2;
+  const stringR = args.stringRange ?? 1;
   const allowed = new Set<number>(pcs);
   const candidates: Array<{ midi: number; pos: LastPosition; score: number }> = [];
 
-  for (let ds = -1; ds <= 1; ds += 1) {
+  for (let ds = -stringR; ds <= stringR; ds += 1) {
     const s = lastPos.string + ds;
     if (s < 0 || s > 5) continue;
     const open = STANDARD_TUNING_MIDI[s]!;
-    for (let df = -2; df <= 2; df += 1) {
+    for (let df = -fretR; df <= fretR; df += 1) {
       const f = lastPos.fret + df;
       if (f < 0 || f > maxFret) continue;
       const midi = open + f;
-      if (midi < 45 || midi > 80) continue;
+      if (midi < 40 || midi > 84) continue;
       const pc = mod12(midi);
       if (!allowed.has(pc)) continue;
       if (lastMidi != null && midi === lastMidi) continue;
 
-      const score = Math.abs(df) * 1.0 + Math.abs(ds) * 1.8 + Math.abs(f - positionPreference) * 0.25;
+      const sameStringBonus = ds === 0 ? -0.6 : 0;
+      const score =
+        Math.abs(df) * 0.9 +
+        Math.abs(ds) * 2.5 +
+        Math.abs(f - positionPreference) * 0.15 +
+        sameStringBonus;
       candidates.push({ midi, pos: { string: s, fret: f }, score });
     }
   }
 
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => a.score - b.score);
-  const take = Math.min(6, candidates.length);
+  const take = Math.min(4, candidates.length);
   const chosen = candidates[rng.int(0, take)]!;
   return { midi: chosen.midi, pos: chosen.pos };
 }
@@ -568,6 +577,7 @@ export function generatePhraseCandidate(args: {
 
   for (let bar = 0; bar < song.progression.bars.length; bar += 1) {
     const barStart = bar * EIGHTH_NOTES_PER_BAR;
+    const barPcCount = new Map<PitchClass, number>();
 
     if (style === "ChordTone4NoteType") {
       // Chord tones only. Quarter-note feel.
@@ -668,17 +678,32 @@ export function generatePhraseCandidate(args: {
             pos = chosen.pos;
           }
         } else {
-          const chosen = chooseMidiNearLastPosition({
+          const nearby = chooseMidiFromFretboardWindow({
             rng,
-            pc: targetPc,
+            pcs: [targetPc],
             maxFret: params.maxFret,
             positionPreference: params.positionPreference,
             lastMidi,
             lastPos,
-            strong: isStrongStep(step),
+            fretRange: 2,
+            stringRange: 1,
           });
-          midi = chosen.midi;
-          pos = chosen.pos;
+          if (nearby) {
+            midi = nearby.midi;
+            pos = nearby.pos;
+          } else {
+            const chosen = chooseMidiNearLastPosition({
+              rng,
+              pc: targetPc,
+              maxFret: params.maxFret,
+              positionPreference: params.positionPreference,
+              lastMidi,
+              lastPos,
+              strong: isStrongStep(step),
+            });
+            midi = chosen.midi;
+            pos = chosen.pos;
+          }
         }
 
         events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
@@ -686,6 +711,7 @@ export function generatePhraseCandidate(args: {
         occupy(step, 2);
         lastMidi = midi;
         if (pos) lastPos = pos;
+        barPcCount.set(mod12(midi), (barPcCount.get(mod12(midi)) ?? 0) + 1);
 
         stackIndex += 1;
       }
@@ -746,21 +772,46 @@ export function generatePhraseCandidate(args: {
         if (occupied.has(step)) continue;
         if (chordHitSteps.has(step) || chordHitSteps.has(step - 1) || chordHitSteps.has(step + 1)) continue;
 
+        // 同音連続・同小節内の重複を避ける: 直前と同じPC、または小節内で2回以上使ったPCなら差し替え
+        let pcToUse = fe.pc;
+        const lastPc = lastMidi != null ? mod12(lastMidi) : null;
+        const countInBar = barPcCount.get(fe.pc) ?? 0;
+        const shouldSubstitute =
+          (lastPc != null && fe.pc === lastPc) || countInBar >= 2;
+        if (shouldSubstitute) {
+          const pool = [...chordTonePcs(startChord), ...startChord.scalePcs];
+          const other = [...new Set(pool)].filter((p) => p !== fe.pc);
+          if (other.length) pcToUse = choosePcNearLast({ rng, pool: other, lastMidi });
+        }
+
         const strong = isStrongStep(step);
-        const { midi, pos } = chooseMidiNearLastPosition({
+        const nearby = chooseMidiFromFretboardWindow({
           rng,
-          pc: fe.pc,
+          pcs: [pcToUse],
           maxFret: params.maxFret,
           positionPreference: params.positionPreference,
           lastMidi,
           lastPos,
-          strong,
+          fretRange: 2,
+          stringRange: 1,
         });
-        events.push({ kind: "note", stepEighth: step, durationEighth: fe.durationEighth, midi });
+        const pick: { midi: number; pos: LastPosition | null } =
+          nearby ??
+          chooseMidiNearLastPosition({
+            rng,
+            pc: pcToUse,
+            maxFret: params.maxFret,
+            positionPreference: params.positionPreference,
+            lastMidi,
+            lastPos,
+            strong,
+          });
+        events.push({ kind: "note", stepEighth: step, durationEighth: fe.durationEighth, midi: pick.midi });
         starts.add(step);
         occupy(step, fe.durationEighth);
-        lastMidi = midi;
-        if (pos) lastPos = pos;
+        lastMidi = pick.midi;
+        if (pick.pos) lastPos = pick.pos;
+        barPcCount.set(mod12(pick.midi), (barPcCount.get(mod12(pick.midi)) ?? 0) + 1);
       }
     }
 
@@ -785,16 +836,30 @@ export function generatePhraseCandidate(args: {
       starts.add(step);
       occupy(step, dur);
       blockAdjacentEighthStarts(step, dur);
+      // 和音のあとは2つの4分スロットを休みにする（和音を鳴らす余韻）
+      const nextQ1 = step + 2;
+      const nextQ2 = step + 4;
+      if (nextQ1 < total) { occupied.add(nextQ1); occupied.add(nextQ1 + 1); }
+      if (nextQ2 < total) { occupied.add(nextQ2); occupied.add(nextQ2 + 1); }
       lastPos = hit.anchorPos;
       lastMidi = Math.max(...hit.midis);
     }
 
     // モチーフ/追加補完は “4つ打ちスロット” のみ。8分連打は禁止（motifは2音までに制限）。
+    // 小節内の目標音数（density に依存）: 1〜3 音が自然
+    const targetNotesPerBar = Math.max(1, Math.round(1 + params.density * 3));
+
     for (const localStep of slots) {
       const step = barStart + localStep;
       if (step >= total) continue;
       if (blockedStarts.has(step)) continue;
       if (occupied.has(step)) continue;
+
+      // 小節内の音数が目標に達していたらスキップ（確率的）
+      const curNotes = events.filter(
+        (e) => e.stepEighth >= barStart && e.stepEighth < barStart + EIGHTH_NOTES_PER_BAR,
+      ).length;
+      if (curNotes >= targetNotesPerBar && rng.bool(0.75)) continue;
 
       const chord = chordAtStep(song.progression, step);
       const chordPcs = chordTonePcs(chord);
@@ -829,53 +894,82 @@ export function generatePhraseCandidate(args: {
 
       // モチーフを挿入（強拍付近で開始しやすい）
       if (motif && rng.bool(clamp01(params.motifRate)) && (isStrong || rng.bool(0.35))) {
-        // 4分中心を崩さない: 2音だけ（次の4分で続きは書かない）
         const pcs = applyMotifFromStartPc(targetPc, motif).slice(0, 2);
         const pc = pcs[0]!;
-        const { midi, pos } = chooseMidiNearLastPosition({
+        const motifNearby = chooseMidiFromFretboardWindow({
           rng,
-          pc,
+          pcs: [pc],
           maxFret: params.maxFret,
           positionPreference: params.positionPreference,
           lastMidi,
           lastPos,
-          strong: isStrong,
+          fretRange: 2,
+          stringRange: 1,
         });
-        events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
+        const mPick: { midi: number; pos: LastPosition | null } =
+          motifNearby ??
+          chooseMidiNearLastPosition({
+            rng,
+            pc,
+            maxFret: params.maxFret,
+            positionPreference: params.positionPreference,
+            lastMidi,
+            lastPos,
+            strong: isStrong,
+          });
+        events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi: mPick.midi });
         occupy(step, 2);
-        lastMidi = midi;
-        if (pos) lastPos = pos;
+        lastMidi = mPick.midi;
+        if (mPick.pos) lastPos = mPick.pos;
+        barPcCount.set(mod12(mPick.midi), (barPcCount.get(mod12(mPick.midi)) ?? 0) + 1);
         continue;
       }
 
-      const pickedWeak =
-        !isStrong
-          ? chooseMidiFromPcPoolNearLastWindow({
-              rng,
-              pcs: rng.bool(0.65) ? chordPcs : chord.scalePcs,
-              maxFret: params.maxFret,
-              positionPreference: params.positionPreference,
-              lastMidi,
-              lastPos,
-            })
-          : null;
+      // 同音連続・同小節内重複を避ける
+      let pcToUse = targetPc;
+      const lastPc = lastMidi != null ? mod12(lastMidi) : null;
+      const countInBar = barPcCount.get(targetPc) ?? 0;
+      if ((lastPc != null && targetPc === lastPc) || countInBar >= 2) {
+        const pool = rng.bool(0.6) ? chordPcs : chord.scalePcs;
+        const other = [...new Set(pool)].filter((p) => p !== targetPc);
+        if (other.length) pcToUse = choosePcNearLast({ rng, pool: other, lastMidi });
+      }
 
-      const { midi, pos } =
-        pickedWeak ??
+      const weakPoolRaw = rng.bool(0.65) ? chordPcs : chord.scalePcs;
+      const weakPool =
+        lastPc != null && (barPcCount.get(lastPc) ?? 0) >= 2
+          ? [...new Set(weakPoolRaw)].filter((p) => p !== lastPc)
+          : weakPoolRaw;
+      const pcsForWindow = isStrong ? [pcToUse] : weakPool.length ? weakPool : weakPoolRaw;
+
+      const nearby = chooseMidiFromFretboardWindow({
+        rng,
+        pcs: pcsForWindow,
+        maxFret: params.maxFret,
+        positionPreference: params.positionPreference,
+        lastMidi,
+        lastPos,
+        fretRange: 2,
+        stringRange: 1,
+      });
+
+      const fPick: { midi: number; pos: LastPosition | null } =
+        nearby ??
         chooseMidiNearLastPosition({
           rng,
-          pc: targetPc,
+          pc: pcToUse,
           maxFret: params.maxFret,
           positionPreference: params.positionPreference,
           lastMidi,
           lastPos,
           strong: isStrong,
         });
-      events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi });
+      events.push({ kind: "note", stepEighth: step, durationEighth: 2, midi: fPick.midi });
       starts.add(step);
       occupy(step, 2);
-      lastMidi = midi;
-      if (pos) lastPos = pos;
+      lastMidi = fPick.midi;
+      if (fPick.pos) lastPos = fPick.pos;
+      barPcCount.set(mod12(fPick.midi), (barPcCount.get(mod12(fPick.midi)) ?? 0) + 1);
     }
   }
 

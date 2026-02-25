@@ -153,9 +153,12 @@ function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number)
   const posPenalty = Math.abs(b.avgFret - posPref) * 0.12;
   const stringSkipPenalty = moveString === 2 ? 3.5 : moveString >= 3 ? 8.0 : 0;
   const sameStringStepBonus =
-    a.stringCount === 1 && b.stringCount === 1 && moveString === 0 && moveFret > 0 && moveFret <= 2 ? -0.6 : 0;
+    a.stringCount === 1 && b.stringCount === 1 && moveString === 0 && moveFret > 0 && moveFret <= 2 ? -0.8 : 0;
 
   // 高音弦↔低音弦の“行き来”を抑える（音色が急に変わってジャズギターらしさが落ちる）
+  const fretJumpPenalty =
+    moveFret <= 2 ? 0 : moveFret === 3 ? 2.5 : moveFret === 4 ? 5.0 : moveFret >= 5 ? 4.0 * moveFret : 0;
+
   const regionA = a.avgString <= 2 ? "low" : a.avgString >= 4 ? "high" : "mid";
   const regionB = b.avgString <= 2 ? "low" : b.avgString >= 4 ? "high" : "mid";
   const regionSwitchPenalty = regionA !== regionB ? 1.8 : 0;
@@ -165,8 +168,9 @@ function transitionCost(a: FingeringOption, b: FingeringOption, posPref: number)
     b.stringCount === 1 && (b.minString === 0 || b.maxString === 5) ? 0.25 : 0;
 
   return (
-    moveFret * 1.0 +
-    moveString * 2.4 +
+    moveFret * 1.2 +
+    moveString * 2.6 +
+    fretJumpPenalty +
     spanPenalty +
     stringSpanPenalty +
     posPenalty +

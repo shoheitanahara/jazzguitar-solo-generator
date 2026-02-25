@@ -69,22 +69,43 @@ export function generateTwoBeatForm(ctx: FormContext): FormResult {
   const space = clamp01(ctx.space);
   const useChrom = rng.bool(c);
 
-  // Quarter-note feel base:
-  // - Beat1 (offset0) and Beat2 (offset2) are the default anchors (duration=2).
-  // - Optionally add ONE eighth-note embellishment at offset1 or offset3.
-  // - More space -> more likely to omit Beat2.
+  // Comping-like feel: not every beat has a note.
+  // - Full rest (skip both beats): probability rises with space
+  // - Beat1 only (skip beat 2): common
+  // - Both beats: least likely when space is high
 
-  const beat2Omit = rng.bool(space * 0.75);
+  // 全2拍休み: space が高いほど出やすい（コンピング的な"間"）
+  const fullRest = rng.bool(space * 0.45);
+  if (fullRest) return { events: [], name: "rest" };
+
+  // Beat1 省略（Beat2 だけ鳴る）: やや珍しい
+  const beat1Omit = rng.bool(space * 0.25);
+
+  const beat2Omit = rng.bool(Math.min(0.65, space * 0.75 + 0.2));
 
   const beat2Pc = beat2Omit
     ? null
     : (() => {
         // choose a near chord/scale tone that leans toward the next guide
         const pool = rng.bool(0.7) ? chordPcs : scalePcs;
-        return pickNearPc(rng, pool, nextGuidePc);
+        const candidate = pickNearPc(rng, pool, nextGuidePc);
+        // 同小節内の同音連続を避ける: beat1と同一なら別の音を優先
+        if (candidate === startGuidePc && pool.length >= 2) {
+          const other = pool.filter((pc) => pc !== startGuidePc);
+          if (other.length) return pickNearPc(rng, other, nextGuidePc);
+        }
+        return candidate;
       })();
 
   const events: FormEvent[] = [];
+
+  if (beat1Omit) {
+    // Beat 2 だけ鳴らす（シンコペーション的な効果）
+    if (beat2Pc != null) {
+      events.push({ offsetEighth: 2, durationEighth: 2, pc: beat2Pc });
+    }
+    return { events, name: "beat2-only" };
+  }
 
   // Beat 1 anchor
   events.push({ offsetEighth: 0, durationEighth: 2, pc: startGuidePc });
