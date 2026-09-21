@@ -1,181 +1,201 @@
 "use client";
 
 import * as React from "react";
-import { AUTUMN_LEAVES_GM_32BARS } from "@/lib/songs/autumnLeavesGm";
-import { formatChordChartWithSections } from "@/lib/music/progression";
-import type { Level, Style } from "@/lib/generator";
-import { generateRankedTabs } from "@/lib/engine";
-import { getChordLooper, type ChordLooper } from "@/lib/audio";
-import { Controls } from "@/components/Controls";
+import { TAKE_THE_A_TRAIN_C_32BARS } from "@/lib/songs/takeTheATrainC";
+import { uniqueChordsInSong } from "@/lib/music/scaleMap";
+import {
+  buildFormTimeline,
+  resolvePlaybackPosition,
+  seekTimeForProgressRatio,
+  seekTimeForSlot,
+  type PlaybackPhase,
+} from "@/lib/music/playbackTimeline";
 import { ChordChart } from "@/components/ChordChart";
-import { GeneratedList } from "@/components/GeneratedList";
-import { AudioControls } from "@/components/AudioControls";
-import { paramsForStyle } from "@/lib/stylePresets";
+import { FretboardScaleMap } from "@/components/FretboardScaleMap";
+import { AudioPlayerBar } from "@/components/AudioPlayerBar";
 
-const OUTPUT_SIZE = 5;
-const POOL_SIZE = 160;
+const FORM_SECTIONS = [
+  { label: "A (1st ending)", startBarIndex: 0, endBarIndexExclusive: 8 },
+  { label: "A (2nd ending)", startBarIndex: 8, endBarIndexExclusive: 16 },
+  { label: "B", startBarIndex: 16, endBarIndexExclusive: 24 },
+  { label: "A (last)", startBarIndex: 24, endBarIndexExclusive: 32 },
+] as const;
+
+/** Audio: 160 BPM, 8-count intro */
+const AUDIO_SRC = "/audio/Take%20The%20A%20Train.wav";
+const BPM = 160;
+const COUNT_IN_BEATS = 8;
 
 export default function Home() {
-  const song = AUTUMN_LEAVES_GM_32BARS;
-  const chordLines = React.useMemo(() => {
-    const bars = song.progression.bars;
-    // Lead-sheet variant in this project: A(8)x2 + B(16)
-    const sections =
-      bars.length === 32
-        ? [
-            { label: "A (repeat)", startBarIndex: 0, endBarIndexExclusive: 16 },
-            { label: "B", startBarIndex: 16, endBarIndexExclusive: 32 },
-          ]
-        : [{ label: "Form", startBarIndex: 0, endBarIndexExclusive: bars.length }];
+  const song = TAKE_THE_A_TRAIN_C_32BARS;
+  const uniqueChords = React.useMemo(() => uniqueChordsInSong(song), [song]);
+  const timeline = React.useMemo(() => buildFormTimeline(song), [song]);
 
-    return formatChordChartWithSections({ bars, sections, barsPerLine: 4, barCellWidth: 18 });
-  }, [song]);
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const rafRef = React.useRef<number | null>(null);
 
-  const [style, setStyle] = React.useState<Style>("JoePassType");
-  const [level, setLevel] = React.useState<Level>(3);
-  const [seedText, setSeedText] = React.useState<string>("20260221");
-  const [isSeedLocked, setIsSeedLocked] = React.useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [currentTimeSec, setCurrentTimeSec] = React.useState(0);
+  const [durationSec, setDurationSec] = React.useState(0);
+  const [phase, setPhase] = React.useState<PlaybackPhase>({ kind: "idle" });
 
-  const [isGenerating, setIsGenerating] = React.useState(false);
+  const syncFromAudio = React.useCallback(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    const t = el.currentTime;
+    const d = Number.isFinite(el.duration) ? el.duration : 0;
+    setCurrentTimeSec(t);
+    setDurationSec(d);
+    setPhase(
+      resolvePlaybackPosition({
+        currentTimeSec: t,
+        durationSec: d,
+        bpm: BPM,
+        countInBeats: COUNT_IN_BEATS,
+        timeline,
+        isPlaying: !el.paused,
+      }),
+    );
+  }, [timeline]);
 
-  const [items, setItems] = React.useState<ReturnType<typeof generateRankedTabs>["items"]>([]);
-
-  const [bpm, setBpm] = React.useState<number>(120);
-  const [isPlaying, setIsPlaying] = React.useState<boolean>(false);
-  const [swingAmount, setSwingAmount] = React.useState<number>(0.6);
-  const [compSubdivision, setCompSubdivision] = React.useState<"quarter" | "eighth">("eighth");
-  const looperRef = React.useRef<ChordLooper | null>(null);
+  const tick = React.useCallback(() => {
+    syncFromAudio();
+    rafRef.current = window.requestAnimationFrame(tick);
+  }, [syncFromAudio]);
 
   React.useEffect(() => {
     return () => {
-      try {
-        looperRef.current?.stop();
-      } catch {
-        // no-op: Toneが未初期化の場合など
-      }
+      if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+      audioRef.current?.pause();
     };
   }, []);
 
-  const makeRandomSeedText = React.useCallback(() => {
-    const rand =
-      typeof crypto !== "undefined" && "getRandomValues" in crypto
-        ? crypto.getRandomValues(new Uint32Array(1))[0]!.toString(16)
-        : Math.floor(Math.random() * 1e9).toString(16);
-    return `${Date.now().toString(16)}-${rand}`;
-  }, []);
-
-  const onGenerate = async () => {
-    setIsGenerating(true);
+  const onTogglePlay = async () => {
+    const el = audioRef.current;
+    if (!el) return;
     try {
-      // UIスレッドを塞ぎすぎないように、短いyieldを入れる
-      await new Promise((r) => setTimeout(r, 0));
-
-      const seedTextUsed = isSeedLocked ? seedText : makeRandomSeedText();
-      const res = generateRankedTabs({
-        song,
-        style,
-        level,
-        params: paramsForStyle(style, level),
-        seedText: seedTextUsed,
-        poolSize: POOL_SIZE,
-        outputSize: OUTPUT_SIZE,
-      });
-      setItems(res.items);
-      if (!isSeedLocked) setSeedText(seedTextUsed);
-    } finally {
-      setIsGenerating(false);
+      if (el.paused) {
+        await el.play();
+        setIsPlaying(true);
+        if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = window.requestAnimationFrame(tick);
+      } else {
+        el.pause();
+        setIsPlaying(false);
+        if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+        syncFromAudio();
+      }
+    } catch {
+      setIsPlaying(false);
     }
   };
 
-  const onStart = async () => {
-    const looper = looperRef.current ?? getChordLooper();
-    looperRef.current = looper;
-    looper.setSettings({ swingAmount, compSubdivision });
-    await looper.start(song, bpm);
-    setIsPlaying(true);
-  };
-
   const onStop = () => {
-    looperRef.current?.stop();
+    const el = audioRef.current;
+    if (!el) return;
+    el.pause();
+    el.currentTime = 0;
     setIsPlaying(false);
+    if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    setCurrentTimeSec(0);
+    setPhase({ kind: "idle" });
   };
 
-  const onChangeBpm = (next: number) => {
-    const v = Math.round(next);
-    setBpm(v);
-    if (isPlaying) looperRef.current?.setBpm(v);
+  const seekTo = (timeSec: number) => {
+    const el = audioRef.current;
+    if (!el) return;
+    const d = Number.isFinite(el.duration) ? el.duration : durationSec;
+    const t = Math.max(0, d > 0 ? Math.min(timeSec, d) : timeSec);
+    el.currentTime = t;
+    syncFromAudio();
   };
 
-  const onChangeSwingAmount = (next: number) => {
-    const v = Math.max(0, Math.min(0.9, Number(next)));
-    setSwingAmount(v);
-    if (isPlaying) looperRef.current?.setSettings({ swingAmount: v });
+  const onSeekBar = (barIndex: number, segmentIndex: number) => {
+    const chorusIndex = phase.kind === "playing" ? phase.chorusIndex : 0;
+    const t = seekTimeForSlot({
+      timeline,
+      barIndex,
+      segmentIndex,
+      chorusIndex,
+      countInBeats: COUNT_IN_BEATS,
+      bpm: BPM,
+    });
+    if (t == null) return;
+    seekTo(t);
   };
 
-  const onChangeCompSubdivision = (next: "quarter" | "eighth") => {
-    setCompSubdivision(next);
-    if (isPlaying) looperRef.current?.setSettings({ compSubdivision: next });
+  const onSeekRatio = (ratio: number) => {
+    seekTo(seekTimeForProgressRatio(ratio, durationSec));
   };
+
+  const activeBarIndex =
+    phase.kind === "playing" || phase.kind === "count-in" ? phase.barIndex : null;
+  const activeSegmentIndex =
+    phase.kind === "playing" || phase.kind === "count-in" ? phase.segmentIndex : null;
+  const nowChord =
+    phase.kind === "playing" || phase.kind === "count-in" ? phase.slot.chord : null;
+  const nextChord =
+    phase.kind === "playing" || phase.kind === "count-in" ? phase.nextSlot.chord : null;
 
   return (
-    <div className="min-h-screen bg-zinc-50 px-4 py-8 pb-44 text-zinc-900 dark:bg-black dark:text-zinc-100">
+    <div className="min-h-screen bg-zinc-50 px-4 py-8 pb-[min(52vh,28rem)] text-zinc-900 dark:bg-black dark:text-zinc-100">
+      <audio
+        ref={audioRef}
+        src={AUDIO_SRC}
+        preload="metadata"
+        onLoadedMetadata={syncFromAudio}
+        onEnded={() => {
+          setIsPlaying(false);
+          if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+          setPhase({ kind: "ended" });
+          syncFromAudio();
+        }}
+        onPause={() => setIsPlaying(false)}
+        onPlay={() => setIsPlaying(true)}
+      />
+
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-        <header className="grid gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Jazz Guitar Solo Generator</h1>
-          <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-            Generate ranked guitar TAB ideas over the full form of “Autumn Leaves” (Gm).
-          </p>
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight">Take the A Train</h1>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">C · {BPM} BPM · AABA</p>
         </header>
 
         <ChordChart
-          title="Chord Progression (32-bar form · A×2 + B)"
-          subtitle={`Autumn Leaves · Key: ${song.keyCenter}`}
-          lines={chordLines}
+          title="Chord Progression"
+          bars={song.progression.bars}
+          sections={FORM_SECTIONS}
+          activeBarIndex={activeBarIndex}
+          activeSegmentIndex={activeSegmentIndex}
+          onSeekBar={onSeekBar}
         />
 
-        <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-semibold">Generator</h2>
+        <section className="grid gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">Scale Maps</h2>
+          <div className="grid gap-4">
+            {uniqueChords.map((chord) => (
+              <FretboardScaleMap key={chord.text} chord={chord} startFret={5} endFret={15} />
+            ))}
           </div>
-          <Controls
-            style={style}
-            level={level}
-            seedText={seedText}
-            isSeedLocked={isSeedLocked}
-            isGenerating={isGenerating}
-            onChange={(next) => {
-              if (next.style) setStyle(next.style);
-              if (next.level) setLevel(next.level);
-              if (next.seedText != null) setSeedText(next.seedText);
-              if (next.isSeedLocked != null) setIsSeedLocked(next.isSeedLocked);
-            }}
-            onGenerate={() => void onGenerate()}
-          />
         </section>
-
-        <GeneratedList items={items} />
-
-        <footer className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-          TAB uses an 8th-note grid and wraps every 4 bars. (Full 32-bar form)
-        </footer>
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
-        <div className="mx-auto w-full max-w-5xl px-4 py-3">
-          <AudioControls
-            variant="footer"
-            bpm={bpm}
-            isPlaying={isPlaying}
-            swingAmount={swingAmount}
-            compSubdivision={compSubdivision}
-            onChangeBpm={onChangeBpm}
-            onChangeSwingAmount={onChangeSwingAmount}
-            onChangeCompSubdivision={onChangeCompSubdivision}
-            onStart={() => void onStart()}
-            onStop={onStop}
-          />
-        </div>
-      </div>
+      <AudioPlayerBar
+        isPlaying={isPlaying}
+        currentTimeSec={currentTimeSec}
+        durationSec={durationSec}
+        phase={phase}
+        bpm={BPM}
+        nowChord={nowChord}
+        nextChord={nextChord}
+        activeBarIndex={activeBarIndex}
+        activeSegmentIndex={activeSegmentIndex}
+        onTogglePlay={() => void onTogglePlay()}
+        onStop={onStop}
+        onSeekRatio={onSeekRatio}
+      />
     </div>
   );
 }

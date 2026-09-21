@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Jazz Guitar Solo Generator",
-  description: "Generate ranked guitar TAB ideas over Autumn Leaves (8-bar loop).",
+  title: "Take the A Train · Chord & Scale Map",
+  description: "Chord chart and fretboard scale maps for Take the A Train (C).",
 };
 
 export default function RootLayout({
@@ -23,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja">
+    <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
