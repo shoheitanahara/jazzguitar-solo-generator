@@ -11,15 +11,14 @@ function barFromSymbols(symbols: readonly [string, number][]): Bar {
 }
 
 /**
- * Autumn Leaves（G minor）- this project's lead-sheet variant:
- * - A (8 bars) repeated (total 16)
- * - B (16 bars)
- * => total 32 bars
+ * Autumn Leaves（G minor）- iReal Pro 譜面ベースの 32小節展開。
  *
- * Notes:
- * - There are multiple “standard” variants across fake books/recordings.
- * - This version matches the provided lead sheet (no melody included).
- * - Time: 4/4.
+ * A (×2):
+ *   Cm7 | F7 | Bbmaj7 | Ebmaj7 | Am7b5 | D7b13 | Gm6 | Gm6
+ * B:
+ *   Am7b5 | D7b13 | Gm6 | Gm6 | Cm7 | F7 | Bbmaj7 | Ebmaj7
+ * C:
+ *   Am7b5 | D7b13 | Gm7 Gb7 | Fm7 E7 | Am7b5 | D7b13 | Gm6 | Gm6
  */
 export const AUTUMN_LEAVES_GM_32BARS: Song = {
   id: "autumn-leaves-gm-32bars",
@@ -28,29 +27,39 @@ export const AUTUMN_LEAVES_GM_32BARS: Song = {
   progression: {
     timeSignature: "4/4",
     bars: [
-      // A (8) x 2
-      ...Array.from({ length: 2 }).flatMap(() => [
-        barFromSymbols([["Cm7", 4]]),
-        barFromSymbols([["F7", 4]]),
-        barFromSymbols([["Bbmaj7", 4]]),
-        barFromSymbols([["Ebmaj7", 4]]),
-        barFromSymbols([["Am7b5", 4]]),
-        barFromSymbols([["D7", 4]]),
-        barFromSymbols([["Gm", 4]]),
-        barFromSymbols([["Gm", 4]]),
-      ]),
-
-      // B (16)
-      barFromSymbols([["Am7b5", 4]]),
-      barFromSymbols([["D7", 4]]),
-      barFromSymbols([["Gm", 4]]),
-      barFromSymbols([["Gm", 4]]),
+      // A (bars 1–8)
       barFromSymbols([["Cm7", 4]]),
       barFromSymbols([["F7", 4]]),
       barFromSymbols([["Bbmaj7", 4]]),
       barFromSymbols([["Ebmaj7", 4]]),
       barFromSymbols([["Am7b5", 4]]),
-      barFromSymbols([["D7", 4]]),
+      barFromSymbols([["D7b13", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+
+      // A repeat (bars 9–16)
+      barFromSymbols([["Cm7", 4]]),
+      barFromSymbols([["F7", 4]]),
+      barFromSymbols([["Bbmaj7", 4]]),
+      barFromSymbols([["Ebmaj7", 4]]),
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7b13", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+
+      // B (bars 17–24)
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7b13", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+      barFromSymbols([["Cm7", 4]]),
+      barFromSymbols([["F7", 4]]),
+      barFromSymbols([["Bbmaj7", 4]]),
+      barFromSymbols([["Ebmaj7", 4]]),
+
+      // C (bars 25–32)
+      barFromSymbols([["Am7b5", 4]]),
+      barFromSymbols([["D7b13", 4]]),
       barFromSymbols([
         ["Gm7", 2],
         ["Gb7", 2],
@@ -60,10 +69,9 @@ export const AUTUMN_LEAVES_GM_32BARS: Song = {
         ["E7", 2],
       ]),
       barFromSymbols([["Am7b5", 4]]),
-      barFromSymbols([["D7", 4]]),
-      barFromSymbols([["Gm", 4]]),
-      barFromSymbols([["Gm", 4]]),
+      barFromSymbols([["D7b13", 4]]),
+      barFromSymbols([["Gm6", 4]]),
+      barFromSymbols([["Gm6", 4]]),
     ],
   },
 };
-

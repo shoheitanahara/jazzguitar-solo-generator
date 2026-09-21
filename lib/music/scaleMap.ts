@@ -77,10 +77,19 @@ const MIXOLYDIAN_B9: readonly ScaleDegree[] = [
   { semitones: 10, label: "b7" },
 ];
 
+/** Mixolydian ♭13（D7b13 など） */
+const MIXOLYDIAN_B13: readonly ScaleDegree[] = [
+  { semitones: 0, label: "R" },
+  { semitones: 2, label: "9" },
+  { semitones: 4, label: "3" },
+  { semitones: 5, label: "11" },
+  { semitones: 7, label: "5" },
+  { semitones: 8, label: "b13" },
+  { semitones: 10, label: "b7" },
+];
+
 /**
  * コード記号から、ジャズ実用のモードを選ぶ。
- * Take the A Train 向け: 6/maj7→Ionian, m7→Dorian, 7→Mixolydian,
- * 7#11→Lydian Dominant, 7b9→Mixolydian ♭9
  */
 export function scaleDefinitionForChord(symbol: ChordSymbol): ScaleDefinition {
   const root = symbol.root;
@@ -92,11 +101,15 @@ export function scaleDefinitionForChord(symbol: ChordSymbol): ScaleDefinition {
   if (/(b9|♭9|Flat\s*9)/i.test(alt)) {
     return { name: `${root} Mixolydian ♭9`, degrees: MIXOLYDIAN_B9 };
   }
+  if (/(b13|♭13|Flat\s*13)/i.test(alt)) {
+    return { name: `${root} Mixolydian ♭13`, degrees: MIXOLYDIAN_B13 };
+  }
 
   switch (symbol.quality) {
     case "maj7":
     case "6":
       return { name: `${root} Ionian`, degrees: IONIAN };
+    case "m6":
     case "m7":
       return { name: `${root} Dorian`, degrees: DORIAN };
     case "7":

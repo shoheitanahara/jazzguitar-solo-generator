@@ -19,7 +19,7 @@ export type NoteSpelling =
   | "Bb"
   | "B";
 
-export type ChordQuality = "maj7" | "6" | "m7" | "7" | "m7b5";
+export type ChordQuality = "maj7" | "6" | "m6" | "m7" | "7" | "m7b5";
 
 export type ChordSymbol = {
   /** 表示用の元テキスト（例: "Gm"） */

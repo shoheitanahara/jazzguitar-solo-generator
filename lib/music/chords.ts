@@ -15,6 +15,7 @@ type ChordSpec = {
 const CHORD_SPECS: Record<ChordQuality, ChordSpec> = {
   maj7: { chordToneIntervals: [0, 4, 7, 11], guideToneIntervals: [4, 11] },
   "6": { chordToneIntervals: [0, 4, 7, 9], guideToneIntervals: [4, 9] },
+  m6: { chordToneIntervals: [0, 3, 7, 9], guideToneIntervals: [3, 9] },
   m7: { chordToneIntervals: [0, 3, 7, 10], guideToneIntervals: [3, 10] },
   "7": { chordToneIntervals: [0, 4, 7, 10], guideToneIntervals: [4, 10] },
   m7b5: { chordToneIntervals: [0, 3, 6, 10], guideToneIntervals: [3, 10] },
@@ -46,6 +47,8 @@ export function defaultScaleForChord(symbol: ChordSymbol): PitchClass[] {
     // Ionian
     maj7: [0, 2, 4, 5, 7, 9, 11],
     "6": [0, 2, 4, 5, 7, 9, 11],
+    // Dorian (natural 6)
+    m6: [0, 2, 3, 5, 7, 9, 10],
     // Dorian
     m7: [0, 2, 3, 5, 7, 9, 10],
     // Mixolydian
@@ -59,9 +62,8 @@ export function defaultScaleForChord(symbol: ChordSymbol): PitchClass[] {
 }
 
 export function parseChordSymbol(text: string): ChordSymbol {
-  // 例: C6, D7#11, Dm7, G7, Fmaj7, G7b9, C7
-  // オルタレーション（#11 / b9 など）は表示用に残し、品質は基本クオリティで扱う
-  const m = text.match(/^([A-G])([b#]?)(maj7|m7b5|m7|m|6|7)(.*)$/);
+  // 例: C6, Gm6, D7#11, D7b13, Dm7, Am7b5, G7b9
+  const m = text.match(/^([A-G])([b#]?)(maj7|m7b5|m7|m6|m|6|7)(.*)$/);
   if (!m) throw new Error(`Unsupported chord symbol: ${text}`);
   const letter = m[1]!;
   const accidental = m[2] ?? "";
@@ -70,7 +72,7 @@ export function parseChordSymbol(text: string): ChordSymbol {
   const root = `${letter}${accidental}` as NoteSpelling;
   const quality: ChordQuality =
     qualityRaw === "m"
-      ? "m7" // MVPでは m は m7扱い（Gm などの表記対応）
+      ? "m7"
       : (qualityRaw as ChordQuality);
 
   return { text, root, quality };

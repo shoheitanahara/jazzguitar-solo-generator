@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Take the A Train · Chord & Scale Map",
-  description: "Chord chart and fretboard scale maps for Take the A Train (C).",
+  title: "Jazz Guitar · Chord & Scale Map",
+  description: "Chord charts and fretboard scale maps for jazz standards.",
 };
 
 export default function RootLayout({
