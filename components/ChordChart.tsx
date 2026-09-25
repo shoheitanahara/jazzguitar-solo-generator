@@ -36,15 +36,8 @@ export function ChordChart(props: Props) {
     onSeekBar,
   } = props;
 
-  const activeRef = React.useRef<HTMLDivElement | null>(null);
-
-  React.useEffect(() => {
-    if (activeBarIndex == null) return;
-    activeRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-  }, [activeBarIndex, activeSegmentIndex]);
-
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm sm:p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="mb-4 grid gap-1">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
         {subtitle ? (
@@ -104,7 +97,6 @@ export function ChordChart(props: Props) {
                       return (
                         <div
                           key={barNo}
-                          ref={isActiveBar ? activeRef : undefined}
                           role={onSeekBar ? "button" : undefined}
                           tabIndex={onSeekBar ? 0 : undefined}
                           onClick={() => onSeekBar?.(barIndex, 0)}
