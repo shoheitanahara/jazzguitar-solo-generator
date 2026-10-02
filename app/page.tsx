@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SONG_CATALOG } from "@/lib/songs/catalog";
+import { IRealProCredit } from "@/components/IRealProCredit";
 
 export default function Home() {
   return (
@@ -30,6 +31,8 @@ export default function Home() {
             </li>
           ))}
         </ul>
+
+        <IRealProCredit />
       </main>
     </div>
   );

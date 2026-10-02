@@ -14,6 +14,7 @@ import type { SongCatalogEntry } from "@/lib/songs/catalog";
 import { ChordChart } from "@/components/ChordChart";
 import { FretboardScaleMap } from "@/components/FretboardScaleMap";
 import { AudioPlayerBar } from "@/components/AudioPlayerBar";
+import { IRealProCredit } from "@/components/IRealProCredit";
 
 type Props = {
   entry: SongCatalogEntry;
@@ -207,6 +208,8 @@ export function SongPracticePage(props: Props) {
             ))}
           </div>
         </section>
+
+        <IRealProCredit />
       </main>
 
       <AudioPlayerBar
