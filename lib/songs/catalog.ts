@@ -2,6 +2,7 @@ import type { Song } from "../music/types";
 import { TAKE_THE_A_TRAIN_C_32BARS } from "./takeTheATrainC";
 import { AUTUMN_LEAVES_GM_32BARS } from "./autumnLeavesGm";
 import { THERE_WILL_NEVER_BE_ANOTHER_YOU_EB_32BARS } from "./thereWillNeverBeAnotherYouEb";
+import { ALL_OF_ME_C_32BARS } from "./allOfMeC";
 
 export type SongSection = {
   label: string;
@@ -63,6 +64,22 @@ export const SONG_CATALOG: readonly SongCatalogEntry[] = [
     countInBeats: 8,
     audioSrc: "/audio/There%20Will%20Never%20Be%20Another%20You.mp4",
     song: THERE_WILL_NEVER_BE_ANOTHER_YOU_EB_32BARS,
+    sections: [
+      { label: "A", startBarIndex: 0, endBarIndexExclusive: 8 },
+      { label: "B", startBarIndex: 8, endBarIndexExclusive: 16 },
+      { label: "A", startBarIndex: 16, endBarIndexExclusive: 24 },
+      { label: "C", startBarIndex: 24, endBarIndexExclusive: 32 },
+    ],
+  },
+  {
+    slug: "all-of-me",
+    title: "All Of Me",
+    keyCenter: "C major",
+    formLabel: "ABAC",
+    bpm: 150,
+    countInBeats: 8,
+    audioSrc: "/audio/All%20Of%20Me.mp4",
+    song: ALL_OF_ME_C_32BARS,
     sections: [
       { label: "A", startBarIndex: 0, endBarIndexExclusive: 8 },
       { label: "B", startBarIndex: 8, endBarIndexExclusive: 16 },

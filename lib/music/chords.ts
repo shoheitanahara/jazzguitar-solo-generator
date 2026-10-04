@@ -19,6 +19,7 @@ const CHORD_SPECS: Record<ChordQuality, ChordSpec> = {
   m7: { chordToneIntervals: [0, 3, 7, 10], guideToneIntervals: [3, 10] },
   "7": { chordToneIntervals: [0, 4, 7, 10], guideToneIntervals: [4, 10] },
   m7b5: { chordToneIntervals: [0, 3, 6, 10], guideToneIntervals: [3, 10] },
+  dim7: { chordToneIntervals: [0, 3, 6, 9], guideToneIntervals: [3, 9] },
 };
 
 /**
@@ -55,6 +56,8 @@ export function defaultScaleForChord(symbol: ChordSymbol): PitchClass[] {
     "7": [0, 2, 4, 5, 7, 9, 10],
     // Locrian
     m7b5: [0, 1, 3, 5, 6, 8, 10],
+    // Whole-half diminished
+    dim7: [0, 2, 3, 5, 6, 8, 9, 11],
   };
 
   const ints = modeIntervals[symbol.quality];
@@ -62,8 +65,8 @@ export function defaultScaleForChord(symbol: ChordSymbol): PitchClass[] {
 }
 
 export function parseChordSymbol(text: string): ChordSymbol {
-  // 例: C6, Gm6, D7#11, D7b13, Dm7, Am7b5, G7b9
-  const m = text.match(/^([A-G])([b#]?)(maj7|m7b5|m7|m6|m|6|7)(.*)$/);
+  // 例: C6, Gm6, Ebdim7, D7#11, Dm7, Am7b5
+  const m = text.match(/^([A-G])([b#]?)(maj7|m7b5|dim7|m7|m6|m|6|7)(.*)$/);
   if (!m) throw new Error(`Unsupported chord symbol: ${text}`);
   const letter = m[1]!;
   const accidental = m[2] ?? "";

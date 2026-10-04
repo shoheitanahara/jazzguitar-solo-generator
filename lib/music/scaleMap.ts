@@ -127,6 +127,20 @@ export function scaleDefinitionForChord(symbol: ChordSymbol): ScaleDefinition {
           { semitones: 10, label: "b7" },
         ],
       };
+    case "dim7":
+      return {
+        name: `${root} Whole-Half Dim`,
+        degrees: [
+          { semitones: 0, label: "R" },
+          { semitones: 2, label: "9" },
+          { semitones: 3, label: "b3" },
+          { semitones: 5, label: "11" },
+          { semitones: 6, label: "b5" },
+          { semitones: 8, label: "b13" },
+          { semitones: 9, label: "bb7" },
+          { semitones: 11, label: "7" },
+        ],
+      };
     default: {
       const _exhaustive: never = symbol.quality;
       return _exhaustive;
