@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import type { Chord } from "@/lib/music/types";
+import type { Chord, PitchClass } from "@/lib/music/types";
 import type { PlaybackPhase } from "@/lib/music/playbackTimeline";
 import { FretboardScaleMap } from "@/components/FretboardScaleMap";
 
@@ -14,6 +14,11 @@ type Props = {
   bpm: number;
   nowChord: Chord | null;
   nextChord: Chord | null;
+  /** Now のスケール解決先（同一コード連続を飛ばす） */
+  nowScaleNext?: Chord | null;
+  /** Next のスケール解決先 */
+  nextScaleNext?: Chord | null;
+  keyRootPc?: PitchClass | null;
   activeBarIndex: number | null;
   activeSegmentIndex: number | null;
   onTogglePlay: () => void;
@@ -81,6 +86,9 @@ export function AudioPlayerBar(props: Props) {
     bpm,
     nowChord,
     nextChord,
+    nowScaleNext = null,
+    nextScaleNext = null,
+    keyRootPc = null,
     activeBarIndex,
     activeSegmentIndex,
     onTogglePlay,
@@ -121,6 +129,9 @@ export function AudioPlayerBar(props: Props) {
                 chord={nowChord}
                 badge="Now"
                 compact
+                nextChord={nowScaleNext}
+                keyRootPc={keyRootPc}
+                hint={nowScaleNext ? `→ ${nowScaleNext.text}` : undefined}
               />
               {nextChord ? (
                 <div className="hidden lg:block">
@@ -129,6 +140,9 @@ export function AudioPlayerBar(props: Props) {
                     chord={nextChord}
                     badge="Next"
                     compact
+                    nextChord={nextScaleNext}
+                    keyRootPc={keyRootPc}
+                    hint={nextScaleNext ? `→ ${nextScaleNext.text}` : undefined}
                   />
                 </div>
               ) : null}

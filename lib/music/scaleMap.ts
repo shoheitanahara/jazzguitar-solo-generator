@@ -1,6 +1,6 @@
 import { STANDARD_TUNING_MIDI, type StringIndex } from "../guitar";
-import { mod12 } from "./notes";
-import type { Chord, ChordSymbol, PitchClass, Song } from "./types";
+import { mod12, noteToPitchClass } from "./notes";
+import type { Chord, ChordSymbol, NoteSpelling, PitchClass, Song } from "./types";
 
 /** フレット上に表示する度数（2/4/6 は 9/11/13 表記） */
 export type ScaleDegree = {
@@ -15,6 +15,13 @@ export type ScaleDefinition = {
   degrees: readonly ScaleDegree[];
 };
 
+export type ScaleContext = {
+  /** 次のコード（解決先・続き） */
+  next?: ChordSymbol | null;
+  /** 曲のキー中心（ii→Dorian / vi→Aeolian 判定用） */
+  keyRootPc?: PitchClass | null;
+};
+
 export type FretboardNote = {
   string: StringIndex;
   fret: number;
@@ -23,6 +30,13 @@ export type FretboardNote = {
   isRoot: boolean;
   /** R / 3 / 5 / 7 などコード構成音 */
   isChordTone: boolean;
+};
+
+export type ScaleMapEntry = {
+  chord: Chord;
+  scale: ScaleDefinition;
+  /** 例: "→ Am7" */
+  hint?: string;
 };
 
 const IONIAN: readonly ScaleDegree[] = [
@@ -45,6 +59,16 @@ const DORIAN: readonly ScaleDegree[] = [
   { semitones: 10, label: "b7" },
 ];
 
+const AEOLIAN: readonly ScaleDegree[] = [
+  { semitones: 0, label: "R" },
+  { semitones: 2, label: "9" },
+  { semitones: 3, label: "b3" },
+  { semitones: 5, label: "11" },
+  { semitones: 7, label: "5" },
+  { semitones: 8, label: "b13" },
+  { semitones: 10, label: "b7" },
+];
+
 const MIXOLYDIAN: readonly ScaleDegree[] = [
   { semitones: 0, label: "R" },
   { semitones: 2, label: "9" },
@@ -52,6 +76,17 @@ const MIXOLYDIAN: readonly ScaleDegree[] = [
   { semitones: 5, label: "11" },
   { semitones: 7, label: "5" },
   { semitones: 9, label: "13" },
+  { semitones: 10, label: "b7" },
+];
+
+/** V7 → i（短調解決）向け */
+const PHRYGIAN_DOMINANT: readonly ScaleDegree[] = [
+  { semitones: 0, label: "R" },
+  { semitones: 1, label: "b9" },
+  { semitones: 4, label: "3" },
+  { semitones: 5, label: "11" },
+  { semitones: 7, label: "5" },
+  { semitones: 8, label: "b13" },
   { semitones: 10, label: "b7" },
 ];
 
@@ -88,12 +123,51 @@ const MIXOLYDIAN_B13: readonly ScaleDegree[] = [
   { semitones: 10, label: "b7" },
 ];
 
+/** "C major" / "G minor" / "Eb major" からルート PC を取る */
+export function keyRootPcFromCenter(keyCenter: string): PitchClass | undefined {
+  const m = keyCenter.trim().match(/^([A-G][b#]?)/);
+  if (!m) return undefined;
+  try {
+    return noteToPitchClass(m[1]! as NoteSpelling);
+  } catch {
+    return undefined;
+  }
+}
+
+function isPerfectFourthUp(fromPc: PitchClass, toPc: PitchClass): boolean {
+  return mod12(toPc - fromPc) === 5;
+}
+
+/** 同一コードの連続を飛ばし、次に変わるコードを返す */
+export function nextDistinctChord(
+  chords: readonly ChordSymbol[],
+  fromIndex: number,
+): ChordSymbol | null {
+  const current = chords[fromIndex];
+  if (!current) return null;
+  for (let j = fromIndex + 1; j < chords.length; j += 1) {
+    const c = chords[j]!;
+    if (c.text !== current.text) return c;
+  }
+  return null;
+}
+
 /**
- * コード記号から、ジャズ実用のモードを選ぶ。
+ * コード記号＋前後関係から、ジャズ実用のモードを選ぶ。
+ *
+ * 例（All Of Me）:
+ * - E7→A7: Mixolydian
+ * - A7→Dm7 / E7→Am7: Phrygian Dominant
+ * - Dm7 (ii): Dorian / Am7 (vi): Aeolian
  */
-export function scaleDefinitionForChord(symbol: ChordSymbol): ScaleDefinition {
+export function scaleDefinitionForChord(
+  symbol: ChordSymbol,
+  ctx: ScaleContext = {},
+): ScaleDefinition {
   const root = symbol.root;
+  const rootPc = noteToPitchClass(root);
   const alt = symbol.text.slice(root.length);
+  const next = ctx.next ?? null;
 
   if (alt.includes("#11") || alt.includes("♯11")) {
     return { name: `${root} Lydian Dominant`, degrees: LYDIAN_DOMINANT };
@@ -105,13 +179,31 @@ export function scaleDefinitionForChord(symbol: ChordSymbol): ScaleDefinition {
     return { name: `${root} Mixolydian ♭13`, degrees: MIXOLYDIAN_B13 };
   }
 
+  // V7 → i（完全4度上のマイナー）: Phrygian Dominant
+  if (
+    symbol.quality === "7" &&
+    next &&
+    (next.quality === "m7" || next.quality === "m6") &&
+    isPerfectFourthUp(rootPc, noteToPitchClass(next.root))
+  ) {
+    return { name: `${root} Phrygian Dominant`, degrees: PHRYGIAN_DOMINANT };
+  }
+
   switch (symbol.quality) {
     case "maj7":
     case "6":
       return { name: `${root} Ionian`, degrees: IONIAN };
     case "m6":
-    case "m7":
       return { name: `${root} Dorian`, degrees: DORIAN };
+    case "m7": {
+      if (ctx.keyRootPc != null) {
+        const deg = mod12(rootPc - ctx.keyRootPc);
+        // vi → Aeolian, ii → Dorian
+        if (deg === 9) return { name: `${root} Aeolian`, degrees: AEOLIAN };
+        if (deg === 2) return { name: `${root} Dorian`, degrees: DORIAN };
+      }
+      return { name: `${root} Dorian`, degrees: DORIAN };
+    }
     case "7":
       return { name: `${root} Mixolydian`, degrees: MIXOLYDIAN };
     case "m7b5":
@@ -158,6 +250,35 @@ export function uniqueChordsInSong(song: Song): Chord[] {
       seen.add(seg.chord.text);
       out.push(seg.chord);
     }
+  }
+  return out;
+}
+
+/**
+ * 進行を走査し、(コード × スケール) のユニーク一覧を返す。
+ * 同じコードでも解決先が違えば別エントリ（例: E7 Mixolydian / E7 Phrygian Dominant）。
+ */
+export function uniqueScaleMapsInSong(song: Song): ScaleMapEntry[] {
+  const keyRootPc = keyRootPcFromCenter(song.keyCenter);
+  const flat: Chord[] = [];
+  for (const bar of song.progression.bars) {
+    for (const seg of bar.segments) flat.push(seg.chord);
+  }
+
+  const seen = new Set<string>();
+  const out: ScaleMapEntry[] = [];
+  for (let i = 0; i < flat.length; i += 1) {
+    const chord = flat[i]!;
+    const next = nextDistinctChord(flat, i);
+    const scale = scaleDefinitionForChord(chord, { next, keyRootPc });
+    const key = `${chord.text}::${scale.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      chord,
+      scale,
+      hint: next ? `→ ${next.text}` : undefined,
+    });
   }
   return out;
 }

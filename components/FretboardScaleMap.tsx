@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import type { Chord } from "@/lib/music/types";
+import type { Chord, ChordSymbol, PitchClass } from "@/lib/music/types";
 import {
   fretboardNotesForScale,
   scaleDefinitionForChord,
   type FretboardNote,
+  type ScaleDefinition,
 } from "@/lib/music/scaleMap";
 
 const STRING_LABELS = ["e", "B", "G", "D", "A", "E"] as const;
@@ -42,6 +43,12 @@ type Props = {
   endFret?: number;
   badge?: string;
   compact?: boolean;
+  /** 明示スケール（未指定なら chord + next から解決） */
+  scale?: ScaleDefinition;
+  nextChord?: ChordSymbol | null;
+  keyRootPc?: PitchClass | null;
+  /** 例: "→ Am7" */
+  hint?: string;
 };
 
 function noteAt(
@@ -54,8 +61,20 @@ function noteAt(
 }
 
 export function FretboardScaleMap(props: Props) {
-  const { chord, startFret = 5, endFret = 15, badge, compact = false } = props;
-  const scale = scaleDefinitionForChord(chord);
+  const {
+    chord,
+    startFret = 5,
+    endFret = 15,
+    badge,
+    compact = false,
+    scale: scaleProp,
+    nextChord = null,
+    keyRootPc = null,
+    hint,
+  } = props;
+  const scale =
+    scaleProp ??
+    scaleDefinitionForChord(chord, { next: nextChord, keyRootPc });
   const frets = React.useMemo(() => {
     const list: number[] = [];
     for (let f = startFret; f <= endFret; f += 1) list.push(f);
@@ -95,7 +114,10 @@ export function FretboardScaleMap(props: Props) {
             {chord.text}
           </h3>
         </div>
-        <p className="truncate text-[10px] text-zinc-600 sm:text-xs dark:text-zinc-400">{scale.name}</p>
+        <p className="truncate text-[10px] text-zinc-600 sm:text-xs dark:text-zinc-400">
+          {scale.name}
+          {hint ? ` · ${hint}` : null}
+        </p>
       </div>
 
       {/* Mobile: fit full width · sm+: slightly roomier but still fluid */}

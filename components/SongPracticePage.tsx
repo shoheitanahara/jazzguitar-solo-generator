@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { uniqueChordsInSong } from "@/lib/music/scaleMap";
+import { keyRootPcFromCenter, uniqueScaleMapsInSong } from "@/lib/music/scaleMap";
 import {
   buildFormTimeline,
   resolvePlaybackPosition,
@@ -24,7 +24,8 @@ export function SongPracticePage(props: Props) {
   const { entry } = props;
   const { song, sections, bpm, countInBeats, audioSrc, title, keyCenter, formLabel } = entry;
 
-  const uniqueChords = React.useMemo(() => uniqueChordsInSong(song), [song]);
+  const scaleMaps = React.useMemo(() => uniqueScaleMapsInSong(song), [song]);
+  const keyRootPc = React.useMemo(() => keyRootPcFromCenter(keyCenter) ?? null, [keyCenter]);
   const timeline = React.useMemo(() => buildFormTimeline(song), [song]);
 
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
@@ -159,6 +160,36 @@ export function SongPracticePage(props: Props) {
   const nextChord =
     phase.kind === "playing" || phase.kind === "count-in" ? phase.nextSlot.chord : null;
 
+  /** 同一コード連続を飛ばした解決先（スケール判定用） */
+  const scaleTargetFor = React.useCallback(
+    (slot: (typeof timeline)[number] | null) => {
+      if (!slot || timeline.length === 0) return null;
+      const idx = timeline.findIndex(
+        (s) =>
+          s.barIndex === slot.barIndex &&
+          s.segmentIndex === slot.segmentIndex &&
+          s.startBeat === slot.startBeat,
+      );
+      if (idx < 0) return null;
+      const cur = slot.chord.text;
+      for (let j = 1; j < timeline.length; j += 1) {
+        const c = timeline[(idx + j) % timeline.length]!;
+        if (c.chord.text !== cur) return c.chord;
+      }
+      return null;
+    },
+    [timeline],
+  );
+
+  const nowScaleNext =
+    phase.kind === "playing" || phase.kind === "count-in"
+      ? scaleTargetFor(phase.slot)
+      : null;
+  const nextScaleNext =
+    phase.kind === "playing" || phase.kind === "count-in"
+      ? scaleTargetFor(phase.nextSlot)
+      : null;
+
   return (
     <div className="min-h-screen bg-zinc-50 px-3 py-6 pb-[min(48vh,22rem)] text-zinc-900 sm:px-4 sm:py-8 sm:pb-[min(52vh,28rem)] dark:bg-black dark:text-zinc-100">
       <audio
@@ -203,8 +234,15 @@ export function SongPracticePage(props: Props) {
         <section className="grid gap-3">
           <h2 className="text-lg font-semibold tracking-tight">Scale Maps</h2>
           <div className="grid gap-4">
-            {uniqueChords.map((chord) => (
-              <FretboardScaleMap key={chord.text} chord={chord} startFret={5} endFret={15} />
+            {scaleMaps.map((map) => (
+              <FretboardScaleMap
+                key={`${map.chord.text}-${map.scale.name}`}
+                chord={map.chord}
+                scale={map.scale}
+                hint={map.hint}
+                startFret={5}
+                endFret={15}
+              />
             ))}
           </div>
         </section>
@@ -220,6 +258,9 @@ export function SongPracticePage(props: Props) {
         bpm={bpm}
         nowChord={nowChord}
         nextChord={nextChord}
+        nowScaleNext={nowScaleNext}
+        nextScaleNext={nextScaleNext}
+        keyRootPc={keyRootPc}
         activeBarIndex={activeBarIndex}
         activeSegmentIndex={activeSegmentIndex}
         onTogglePlay={() => void onTogglePlay()}
