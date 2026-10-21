@@ -155,10 +155,10 @@ export function nextDistinctChord(
 /**
  * コード記号＋前後関係から、ジャズ実用のモードを選ぶ。
  *
- * 例（All Of Me）:
+ * 例（All Of Me / Work Song）:
  * - E7→A7: Mixolydian
- * - A7→Dm7 / E7→Am7: Phrygian Dominant
- * - Dm7 (ii): Dorian / Am7 (vi): Aeolian
+ * - A7→Dm7 / E7→Am7 / C7→Fm: Phrygian Dominant
+ * - Dm7 (ii): Dorian / Am7 (vi)・Fm (i): Aeolian
  */
 export function scaleDefinitionForChord(
   symbol: ChordSymbol,
@@ -198,8 +198,10 @@ export function scaleDefinitionForChord(
     case "m7": {
       if (ctx.keyRootPc != null) {
         const deg = mod12(rootPc - ctx.keyRootPc);
-        // vi → Aeolian, ii → Dorian
-        if (deg === 9) return { name: `${root} Aeolian`, degrees: AEOLIAN };
+        // i / vi → Aeolian, ii → Dorian
+        if (deg === 0 || deg === 9) {
+          return { name: `${root} Aeolian`, degrees: AEOLIAN };
+        }
         if (deg === 2) return { name: `${root} Dorian`, degrees: DORIAN };
       }
       return { name: `${root} Dorian`, degrees: DORIAN };

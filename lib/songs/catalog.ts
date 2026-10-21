@@ -3,6 +3,7 @@ import { TAKE_THE_A_TRAIN_C_32BARS } from "./takeTheATrainC";
 import { AUTUMN_LEAVES_GM_32BARS } from "./autumnLeavesGm";
 import { THERE_WILL_NEVER_BE_ANOTHER_YOU_EB_32BARS } from "./thereWillNeverBeAnotherYouEb";
 import { ALL_OF_ME_C_32BARS } from "./allOfMeC";
+import { WORK_SONG_FM_16BARS } from "./workSongFm";
 
 export type SongSection = {
   label: string;
@@ -85,6 +86,20 @@ export const SONG_CATALOG: readonly SongCatalogEntry[] = [
       { label: "B", startBarIndex: 8, endBarIndexExclusive: 16 },
       { label: "A", startBarIndex: 16, endBarIndexExclusive: 24 },
       { label: "C", startBarIndex: 24, endBarIndexExclusive: 32 },
+    ],
+  },
+  {
+    slug: "work-song",
+    title: "Work Song",
+    keyCenter: "F minor",
+    formLabel: "16-bar",
+    bpm: 150,
+    countInBeats: 8,
+    audioSrc: "/audio/Work%20Song.mp4",
+    song: WORK_SONG_FM_16BARS,
+    sections: [
+      { label: "A", startBarIndex: 0, endBarIndexExclusive: 8 },
+      { label: "B", startBarIndex: 8, endBarIndexExclusive: 16 },
     ],
   },
 ];
