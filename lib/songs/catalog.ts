@@ -4,6 +4,7 @@ import { AUTUMN_LEAVES_GM_32BARS } from "./autumnLeavesGm";
 import { THERE_WILL_NEVER_BE_ANOTHER_YOU_EB_32BARS } from "./thereWillNeverBeAnotherYouEb";
 import { ALL_OF_ME_C_32BARS } from "./allOfMeC";
 import { WORK_SONG_FM_16BARS } from "./workSongFm";
+import { MACK_THE_KNIFE_BB_16BARS } from "./mackTheKnifeBb";
 
 export type SongSection = {
   label: string;
@@ -100,6 +101,20 @@ export const SONG_CATALOG: readonly SongCatalogEntry[] = [
     sections: [
       { label: "A", startBarIndex: 0, endBarIndexExclusive: 8 },
       { label: "B", startBarIndex: 8, endBarIndexExclusive: 16 },
+    ],
+  },
+  {
+    slug: "mack-the-knife",
+    title: "Mack The Knife",
+    keyCenter: "Bb major",
+    formLabel: "16-bar",
+    bpm: 180,
+    countInBeats: 8,
+    audioSrc: "/audio/Mack%20The%20Knife.mp4",
+    song: MACK_THE_KNIFE_BB_16BARS,
+    sections: [
+      { label: "A", startBarIndex: 0, endBarIndexExclusive: 8 },
+      { label: "A (cont.)", startBarIndex: 8, endBarIndexExclusive: 16 },
     ],
   },
 ];
